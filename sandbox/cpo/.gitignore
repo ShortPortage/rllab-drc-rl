@@ -1,19 +1,4 @@
 data
-# Python artifacts
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-.coverage.*
-htmlcov/
-.tox/
-.nox/
-.ipynb_checkpoints/
 *.pyc
 *-checkpoint.ipynb
 .DS_Store
@@ -34,7 +19,6 @@ launch_scripts
 *.sh.o*
 MUJOCO_LOG.TXT
 vendor/mujoco
-mujoco/
 .project
 .pydevproject
 *.pdf
@@ -47,22 +31,11 @@ iterate.dat
 src/
 .settings
 .pods
-
-# AI coding agent / local assistant artifacts
-.ontomics/
-.pi/
-.codex/
-.claude/
-.cursor/
-.aider*
-.ai/
-PLAN.md
-plans/
-agent_logs/
-*.agent.log
-*.session.log
 docs/_build
 blackbox.zip
 blackbox
 rllab/config_personal.py
 *.swp
+sandbox
+__pycache__/
+*~
