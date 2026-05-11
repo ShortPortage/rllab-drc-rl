@@ -8,6 +8,7 @@ channels:
     - soumith
 dependencies:
     - python==3.5.2
+    - pip
     - numpy==1.12.0
     - scipy
     - path.py
@@ -29,9 +30,13 @@ dependencies:
     - pandas
     - pip:
         - Pillow
-        - atari-py
+        #- atari-py
         - pyprind
-        - ipdb
+        - ipdb==0.11
+        - ipython==6.5.0
+        - parso==0.7.1
+        - jedi==0.12.1
+        - prompt-toolkit==1.0.15
         - boto3
         - PyOpenGL
         - nose2
@@ -40,9 +45,9 @@ dependencies:
         - msgpack-python
         - git+https://github.com/inksci/mujoco-py-v0.5.7.git
         - cached_property
-        - line_profiler
-        - cloudpickle
-        - Cython
+        - line_profiler==2.1.2
+        - cloudpickle==1.6.0
+        - Cython==0.29.36
         - redis
         - keras==1.2.1
         - git+https://github.com/Theano/Theano.git@adfe319ce6b781083d8dc3200fb4481b00853791#egg=Theano
@@ -50,15 +55,16 @@ dependencies:
         - git+https://github.com/plotly/plotly.py.git@2594076e29584ede2d09f2aa40a8a195b3f3fc66#egg=plotly
         - awscli
         - git+https://github.com/openai/gym.git@v0.7.4#egg=gym
-        - pyglet
-        - git+https://github.com/neocxi/prettytensor.git
-        - jupyter
-        - progressbar2
-        - chainer==1.18.0
-        - https://storage.googleapis.com/tensorflow/linux/gpu/tensorflow_gpu-1.0.1-cp35-cp35m-linux_x86_64.whl; 'linux' in sys_platform
+        - pyglet==1.5.27
+        #- git+https://github.com/neocxi/prettytensor.git
+        #- jupyter==1.0.0
+        - progressbar2==3.55.0
+        - protobuf==3.19.6
+        #- chainer==1.18.0
+        #- https://storage.googleapis.com/tensorflow/linux/gpu/tensorflow_gpu-1.0.1-cp35-cp35m-linux_x86_64.whl; 'linux' in sys_platform
         - https://storage.googleapis.com/tensorflow/mac/gpu/tensorflow_gpu-1.0.1-py3-none-any.whl; sys_platform == 'darwin'
         - numpy-stl==2.2.0
         - nibabel==2.1.0
         - pylru==1.0.9
-        - hyperopt
+        - hyperopt==0.1.2
         - polling
