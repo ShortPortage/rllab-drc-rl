@@ -49,6 +49,7 @@ src/
 .pods
 
 # AI coding agent / local assistant artifacts
+.ontomics/
 .pi/
 .codex/
 .claude/

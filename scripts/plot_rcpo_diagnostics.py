@@ -43,10 +43,12 @@ import matplotlib.pyplot as plt
 
 
 DIRECTIONAL_KEY = "ProjectedStepDirectionalRetentionPct"
+ALIGNMENT_KEY = "ProjectedStepDirectionalAlignmentPct"
 NORM_RATIO_KEY = "ProjectedStepNormRatioPct"
 DEFAULT_COST_KEY = "MeanSafety[U]Return"
 FALLBACK_COST_KEY = "SafetyEval"
 THRESHOLD_KEY = "SafetyThreshold"
+SUMMARY_WINDOW = 150
 
 
 def _ensure_dir(path):
@@ -110,11 +112,38 @@ def read_progress_csv(path):
 
 
 def column(rows, key):
-    return np.asarray([_to_float(row.get(key)) for row in rows], dtype=np.float64)
+    values = np.asarray([_to_float(row.get(key)) for row in rows], dtype=np.float64)
+    if key == ALIGNMENT_KEY and not has_finite(values):
+        retention = np.asarray([_to_float(row.get(DIRECTIONAL_KEY)) for row in rows], dtype=np.float64)
+        reward_norm = np.asarray([_to_float(row.get("RewardStepNorm")) for row in rows], dtype=np.float64)
+        projected_norm = np.asarray([_to_float(row.get("ProjectedStepNorm")) for row in rows], dtype=np.float64)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            values = retention * reward_norm / projected_norm
+        values[~np.isfinite(values)] = np.nan
+    return values
 
 
 def has_finite(values):
     return values.size > 0 and np.any(np.isfinite(values))
+
+
+def last_window_mean(values, window=SUMMARY_WINDOW):
+    tail = values[-window:]
+    finite = tail[np.isfinite(tail)]
+    if finite.size == 0:
+        return np.nan, 0
+    return float(np.mean(finite)), int(finite.size)
+
+
+def print_last_window_mean(label, key, values, output_path, window=SUMMARY_WINDOW):
+    mean, count = last_window_mean(values, window=window)
+    plot_name = os.path.basename(output_path)
+    if np.isfinite(mean):
+        print("summary: %s | %s | last %d rows avg %s = %.6g (n=%d)" % (
+            plot_name, label, window, key, mean, count))
+    else:
+        print("summary: %s | %s | last %d rows avg %s = nan (n=0)" % (
+            plot_name, label, window, key))
 
 
 def default_label(path):
@@ -176,6 +205,7 @@ def plot_series(runs, y_key, title, ylabel, output_path, x_key=None, fallback_ke
         if key_used != y_key:
             label = "%s (%s)" % (label, key_used)
         ax.plot(x, y, label=label)
+        print_last_window_mean(label, key_used, y, output_path)
         plotted = True
 
     ax.set_title(title)
@@ -210,6 +240,7 @@ def plot_phase_reward_series(runs, reward_key, phase_length, phase_offset, phase
             print("warning: %s has no finite %s reward rows" % (run["path"], phase_name), file=sys.stderr)
             continue
         ax.plot(x, y, label=run["label"])
+        print_last_window_mean(run["label"], reward_key, y, output_path)
         plotted = True
 
     ax.set_title("%s reward over time (%s)" % (phase_name, reward_key))
@@ -253,6 +284,7 @@ def plot_cost_with_threshold(runs, cost_key, output_path, x_key=None, threshold=
         if key_used != cost_key:
             cost_label = "%s (%s)" % (cost_label, key_used)
         line = ax.plot(x, cost, label=cost_label)[0]
+        print_last_window_mean(cost_label, key_used, cost, output_path)
         plotted = True
 
         threshold_values = column(run["rows"], THRESHOLD_KEY)
@@ -282,7 +314,7 @@ def plot_cost_with_threshold(runs, cost_key, output_path, x_key=None, threshold=
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Save PNG plots for RCPO reward, raw cost, directional retention, and norm ratio diagnostics."
+        description="Save PNG plots for RCPO reward, raw cost, directional retention, directional alignment, and norm ratio diagnostics."
     )
     parser.add_argument(
         "inputs",
@@ -391,6 +423,14 @@ def main():
         "Projected-step directional retention (%)\n(final projected step progress along reward-step direction)",
         "Directional retention (% of reward-direction step)",
         os.path.join(args.output_dir, "projected_step_directional_retention_pct.png"),
+        x_key=args.x_key,
+    )
+    plot_series(
+        runs,
+        ALIGNMENT_KEY,
+        "Projected-step directional alignment (%)\n(cosine alignment with reward-step direction)",
+        "Directional alignment (% cosine similarity)",
+        os.path.join(args.output_dir, "projected_step_directional_alignment_pct.png"),
         x_key=args.x_key,
     )
     plot_series(
