@@ -1,0 +1,451 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts,mathtools}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+\newcommand{\Sset}{\mathcal S}
+\newcommand{\Aset}{\mathcal A}
+\newcommand{\Pset}{\mathcal P}
+\newcommand{\E}{\mathbb E}
+\newcommand{\R}{\mathbb R}
+\newcommand{\KL}{D_{\mathrm{KL}}}
+\newcommand{\Proj}{\operatorname{Proj}}
+\newcommand{\argmax}{\operatorname*{arg\,max}}
+\newcommand{\argmin}{\operatorname*{arg\,min}}
+\newcommand{\half}{\tfrac12}
+\newcommand{\rh}{\rho}
+\newcommand{\dpi}[2]{d_{#2}^{#1}}
+
+\title{Robust Constrained Policy Optimization (RCPO):\\
+A Standalone Algorithmic and Mathematical Description}
+\author{Distilled from \emph{Constrained Reinforcement Learning Under Model Mismatch}\\
+with repository implementation notes}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Purpose and Scope}
+This document describes Robust Constrained Policy Optimization (RCPO) in enough detail to implement it.  The primary source is the ICML 2024 paper \emph{Constrained Reinforcement Learning Under Model Mismatch} by Sun, He, Miao, and Zou.  Repository code is used only to fill implementation details such as trajectory preprocessing, generalized advantage estimation, conjugate-gradient natural-gradient computations, and practical projected-step variants.
+
+The paper's core problem is robust constrained reinforcement learning under transition-model mismatch.  The algorithm has two conceptual steps at every policy iteration:
+\begin{enumerate}[leftmargin=2em]
+    \item \textbf{Robust policy improvement:} estimate the worst-case transition kernel for reward under the current policy and take a trust-region policy-improvement step for the robust reward objective.
+    \item \textbf{Projection:} estimate the worst-case transition kernel for utility/constraint under the current policy and project the intermediate policy into a robust safe set.
+\end{enumerate}
+The result is a primal, projection-based algorithm with per-iteration bounds on worst-case reward degradation/improvement and robust constraint violation.
+
+\section{Problem Setup and Notation}
+\subsection{Constrained MDP}
+A constrained Markov decision process (CMDP) is
+\[
+    (\Sset,\Aset,p,r,c,\gamma,\rho),
+\]
+where $\Sset$ is the state space, $\Aset$ is the action space, $p(\cdot\mid s,a)\in\Delta(\Sset)$ is a transition kernel, $r:\Sset\times\Aset\to[0,1]$ is reward, $c:\Sset\times\Aset\to[0,1]$ is utility, $\gamma\in(0,1)$ is the discount factor, and $\rho$ is the initial-state distribution.  A stationary stochastic policy is $\pi(a\mid s)$.
+
+For a fixed transition kernel $p$, define the discounted reward and utility values
+\begin{align}
+    V^{\pi}_{r,p}(s)
+        &= \E_{p,\pi}\!\left[\sum_{t=0}^{\infty}\gamma^t r(s_t,a_t)\mid s_0=s\right],\\
+    Q^{\pi}_{r,p}(s,a)
+        &= \E_{p,\pi}\!\left[\sum_{t=0}^{\infty}\gamma^t r(s_t,a_t)\mid s_0=s,a_0=a\right],\\
+    V^{\pi}_{c,p}(s)
+        &= \E_{p,\pi}\!\left[\sum_{t=0}^{\infty}\gamma^t c(s_t,a_t)\mid s_0=s\right],\\
+    Q^{\pi}_{c,p}(s,a)
+        &= \E_{p,\pi}\!\left[\sum_{t=0}^{\infty}\gamma^t c(s_t,a_t)\mid s_0=s,a_0=a\right].
+\end{align}
+For an initial distribution $\rho$, write $V^{\pi}_{r,p}(\rho)=\E_{s\sim\rho}[V^{\pi}_{r,p}(s)]$ and similarly for utility.  The discounted state occupancy measure is
+\begin{equation}
+    d_p^{\pi}(s)=(1-\gamma)\sum_{t=0}^{\infty}\gamma^t
+    \Pr(s_t=s\mid s_0\sim\rho,\pi,p).
+\end{equation}
+The reward and utility advantages under $p$ are
+\begin{align}
+    A^{\pi}_{r,p}(s,a)&=Q^{\pi}_{r,p}(s,a)-V^{\pi}_{r,p}(s),\\
+    A^{\pi}_{c,p}(s,a)&=Q^{\pi}_{c,p}(s,a)-V^{\pi}_{c,p}(s).
+\end{align}
+
+\subsection{Model Mismatch and Rectangular Uncertainty}
+Instead of trusting a single transition kernel, RCPO assumes an uncertainty set $\Pset$ of possible transition kernels.  The paper uses an $(s,a)$-rectangular uncertainty set
+\begin{equation}
+    \Pset = \bigotimes_{s\in\Sset,a\in\Aset}\Pset_s^a,
+    \qquad \Pset_s^a\subseteq \Delta(\Sset),
+\end{equation}
+so the allowed next-state distributions at different state-action pairs are independent.  This is important because it permits robust dynamic-programming-style or projected-gradient updates over kernels.
+
+The robust reward value is the worst-case reward value over $\Pset$:
+\begin{equation}
+    V_r^{\pi}(s)=\min_{p\in\Pset}V_{r,p}^{\pi}(s),
+    \qquad
+    Q_r^{\pi}(s,a)=\min_{p\in\Pset}Q_{r,p}^{\pi}(s,a).
+\end{equation}
+The robust utility value is likewise
+\begin{equation}
+    V_c^{\pi}(s)=\min_{p\in\Pset}V_{c,p}^{\pi}(s).
+\end{equation}
+The paper's constraint is utility-style: the policy is safe if the worst-case utility remains above a threshold $d$.
+
+For a policy $\pi$, define separate worst-case kernels
+\begin{align}
+    p_r^{\pi} &\in \argmin_{p\in\Pset} V_{r,p}^{\pi}(\rho),\\
+    p_c^{\pi} &\in \argmin_{p\in\Pset} V_{c,p}^{\pi}(\rho).
+\end{align}
+These can differ: the transition kernel that minimizes reward need not be the one that minimizes utility.  This is one of the main complications relative to non-robust CPO/TRPO.
+
+\subsection{Robust Constrained Objective}
+The robust constrained RL problem is
+\begin{equation}
+    \boxed{
+    \max_{\pi} V_r^{\pi}(\rho)
+    \quad\text{s.t.}\quad
+    V_c^{\pi}(\rho)\ge d .}
+    \label{eq:robust-objective}
+\end{equation}
+A solution should be robust in two senses:
+\begin{enumerate}[leftmargin=2em]
+    \item for every transition kernel in the uncertainty set, reward performance is protected by optimizing the worst case;
+    \item for every transition kernel in the uncertainty set, the utility constraint is satisfied because even the worst-case utility is at least $d$.
+\end{enumerate}
+
+\paragraph{Cost-style translation.}
+The repository safety code uses a cost convention: a safety quantity should be \emph{at most} a threshold, e.g. `safety\_eval <= max\_value'.  If $\ell$ is a cost, the paper's utility notation can be recovered by setting $c=-\ell$ and $d=-d_{\ell}$, or by rewriting all constraints as $J_{\ell}^{\pi}\le d_{\ell}$.  In this document the paper's utility convention $V_c^{\pi}\ge d$ is primary; implementation notes explicitly mention the cost-style counterpart.
+
+\section{Robust Performance-Difference Approximation}
+RCPO is based on a robust analogue of the performance-difference lemma.  For policies $\pi$ and $\pi'$, let $p_r^{\pi'}$ be the reward worst-case kernel for $\pi'$, and define
+\begin{equation}
+    \epsilon^{\pi'}_{r,p_r^{\pi'}}
+    = \max_s \left|\E_{a\sim\pi'}[A^{\pi}_{r,p_r^{\pi'}}(s,a)]\right|.
+\end{equation}
+The robust performance-difference lemma in the paper lower-bounds $V_r^{\pi'}(\rho)-V_r^{\pi}(\rho)$ using an advantage term and a KL penalty.  The exact lower bound involves the new policy's worst-case kernel $p_r^{\pi'}$, which depends implicitly on $\pi'$ and is therefore difficult to optimize.
+
+RCPO replaces that intractable dependence with a local approximation around the current policy $\pi_k$:
+\begin{equation}
+    A^{\pi_k}_{r,p_r^{\pi'}}(s,a)\approx A^{\pi_k}_{r,p_r^{\pi_k}}(s,a),
+    \qquad
+    d_{p_r^{\pi'}}^{\pi_k}(s)\approx d_{p_r^{\pi_k}}^{\pi_k}(s).
+\end{equation}
+The paper shows in Appendix C that this approximation matches the robust value difference to first order when $\pi'$ is close to $\pi_k$.  This justifies a trust-region update in a KL neighborhood of $\pi_k$.
+
+\section{Finding Robust Value and Constraint Functions}
+At iteration $k$, RCPO must estimate two worst-case kernels:
+\begin{align}
+    p_r^k &\approx p_r^{\pi_k},\\
+    p_c^k &\approx p_c^{\pi_k}.
+\end{align}
+Then it estimates value functions, advantages, and occupancies by executing/evaluating $\pi_k$ under those kernels.
+
+\subsection{Projected Gradient Descent over Kernels}
+For the reward kernel, the paper uses projected gradient descent:
+\begin{equation}
+    p_{r,k}^{t+1}
+    =\Proj_{\Pset}\!\left(p_{r,k}^{t}-\beta_t\nabla_p V^{\pi_k}_{r,p_{r,k}^{t}}(\rho)\right),
+    \label{eq:reward-kernel-pgd}
+\end{equation}
+where $\beta_t$ is a kernel-learning step size and
+\begin{equation}
+    \Proj_{\Pset}(\bar p)
+    =\argmin_{q\in\Pset}D(\bar p,q)
+\end{equation}
+for a chosen distance $D$ between transition distributions.  For utility, RCPO independently computes
+\begin{equation}
+    p_{c,k}^{t+1}
+    =\Proj_{\Pset}\!\left(p_{c,k}^{t}-\beta_t\nabla_p V^{\pi_k}_{c,p_{c,k}^{t}}(\rho)\right).
+    \label{eq:utility-kernel-pgd}
+\end{equation}
+After $T$ inner steps, set $p_r^k=p_{r,k}^T$ and $p_c^k=p_{c,k}^T$.
+
+\paragraph{Tabular implementation.}
+In a small finite MDP, $p(\cdot\mid s,a)$ can be represented directly.  The gradient in \eqref{eq:reward-kernel-pgd} can be computed by differentiating Bellman equations or by backpropagating through robust value evaluation.  Projection is performed independently for each $(s,a)$ because $\Pset$ is rectangular.
+
+\paragraph{Large or continuous spaces.}
+The paper suggests parameterizing kernels.  One large-discrete example uses a nominal kernel $p^0$ and features $\phi$:
+\begin{equation}
+    p_{\xi,s,a}(s')=
+    \frac{p^0_{s,a}(s')\exp\left(\eta^\top\phi(s')/\lambda_{s,a}\right)}
+    {\sum_x p^0_{s,a}(x)\exp\left(\eta^\top\phi(x)/\lambda_{s,a}\right)},
+    \qquad \xi=(\eta,\lambda).
+\end{equation}
+For continuous states, the paper gives a Gaussian-mixture parameterization
+\begin{equation}
+    p_{\xi,s,a}(s')=\sum_{i=1}^m \varphi_i(s,a)\,\mathcal N(s';\mu_i(s,a),\sigma_i^2(s,a)),
+\end{equation}
+with parameters $\xi=(\mu,\sigma,\varphi)$ subject to mixture-weight constraints.  Then projected gradient is applied to $\xi$ rather than to an explicit table.
+
+\subsection{Estimating Robust Returns and Advantages}
+Once $p_r^k$ is fixed, collect or simulate trajectories
+\begin{equation}
+    \tau=(s_0,a_0,r_0,c_0,s_1,a_1,\ldots)
+    \sim (\rho,\pi_k,p_r^k)
+\end{equation}
+and estimate
+\begin{align}
+    \widehat V^{\pi_k}_{r,p_r^k}(s_t)&\approx \text{reward baseline},\\
+    \widehat A^{\pi_k}_{r,p_r^k}(s_t,a_t)&\approx \text{reward return or GAE minus baseline}.
+\end{align}
+Similarly, under $p_c^k$, estimate $\widehat V^{\pi_k}_{c,p_c^k}$ and $\widehat A^{\pi_k}_{c,p_c^k}$.  The paper's ideal algorithm treats these samples as coming from the estimated worst-case transition kernels.
+
+\section{Ideal RCPO Algorithm}
+\begin{algorithm}[H]
+\caption{Robust Constrained Policy Optimization (paper-level algorithm)}
+\label{alg:rcpo-paper}
+\begin{algorithmic}[1]
+\Require policy class $\Pi_\theta$, initial policy $\pi_0$, uncertainty set $\Pset$, threshold $d$, discount $\gamma$, policy KL radius $\delta$, kernel steps $\{\beta_t\}$, outer iterations $K$, inner kernel iterations $T$.
+\For{$k=0,1,\ldots,K-1$}
+    \State Initialize $p_{r,k}^0,p_{c,k}^0\in\Pset$.
+    \For{$t=0,1,\ldots,T-1$}
+        \State Update reward worst-case kernel by Eq.~\eqref{eq:reward-kernel-pgd}.
+        \State Update utility worst-case kernel by Eq.~\eqref{eq:utility-kernel-pgd}.
+    \EndFor
+    \State Set $p_r^k\gets p_{r,k}^T$, $p_c^k\gets p_{c,k}^T$.
+    \State Estimate $d_{p_r^k}^{\pi_k}$ and $A^{\pi_k}_{r,p_r^k}$ from trajectories/evaluation under $p_r^k$.
+    \State Estimate $d_{p_c^k}^{\pi_k}$, $A^{\pi_k}_{c,p_c^k}$, and $V^{\pi_k}_{c,p_c^k}(\rho)$ under $p_c^k$.
+    \State \textbf{Robust policy improvement:} compute intermediate policy
+    \begin{equation*}
+        \pi_{k+1/2}=\argmax_{\pi\in\Pi_\theta}
+        \E_{s\sim d_{p_r^k}^{\pi_k},a\sim\pi}\left[A^{\pi_k}_{r,p_r^k}(s,a)\right]
+    \end{equation*}
+    subject to
+    \begin{equation*}
+        \E_{s\sim d_{p_r^k}^{\pi_k}}\left[\KL(\pi(\cdot|s)\|\pi_k(\cdot|s))\right]\le\delta.
+    \end{equation*}
+    \State \textbf{Projection:} compute
+    \begin{equation*}
+        \pi_{k+1}=\argmin_{\pi\in\Pi_\theta}
+        \E_{s\sim d_{p_r^k}^{\pi_k}}\left[\KL(\pi(\cdot|s)\|\pi_{k+1/2}(\cdot|s))\right]
+    \end{equation*}
+    subject to the local robust utility constraint
+    \begin{equation*}
+        V^{\pi_k}_{c,p_c^k}(\rho)
+        +\frac{1}{1-\gamma}\E_{s\sim d_{p_c^k}^{\pi_k},a\sim\pi}
+        \left[A^{\pi_k}_{c,p_c^k}(s,a)\right]
+        \ge d.
+    \end{equation*}
+\EndFor
+\State \Return $\pi_K$.
+\end{algorithmic}
+\end{algorithm}
+
+\section{Practical Parameterized Update}
+The exact subproblems in Algorithm~\ref{alg:rcpo-paper} may be expensive for neural policies.  The paper therefore introduces a local quadratic/linear approximation.
+
+Let $\theta_k$ parameterize $\pi_k$.  Define
+\begin{align}
+    g &:= \nabla_\theta
+    \E_{s\sim d_{p_r^k}^{\pi_k},a\sim\pi_\theta}
+    \left[A^{\pi_k}_{r,p_r^k}(s,a)\right]\Big|_{\theta=\theta_k},
+    \label{eq:g-def}\\
+    h &:= \nabla_\theta
+    \left\{\frac{1}{1-\gamma}\E_{s\sim d_{p_c^k}^{\pi_k},a\sim\pi_\theta}
+    \left[A^{\pi_k}_{c,p_c^k}(s,a)\right]\right\}\Big|_{\theta=\theta_k},
+    \label{eq:h-def}\\
+    H &:= \nabla_\theta^2
+    \E_{s\sim d_{p_r^k}^{\pi_k}}
+    \left[\KL(\pi_\theta(\cdot|s)\|\pi_k(\cdot|s))\right]\Big|_{\theta=\theta_k}.
+    \label{eq:H-def}
+\end{align}
+In practice $H$ is the Fisher/KL Hessian used by TRPO-style methods.  Some presentations absorb the factor $1/(1-\gamma)$ into the definition of $h$ or into the constraint threshold; the implementation only needs the linearized constraint gradient and intercept to use the same scale.
+
+\subsection{Robust Policy Improvement Step}
+The practical improvement subproblem is
+\begin{equation}
+    \max_\theta\; g^\top(\theta-\theta_k)
+    \quad\text{s.t.}\quad
+    \half(\theta-\theta_k)^\top H(\theta-\theta_k)\le\delta.
+    \label{eq:practical-improvement}
+\end{equation}
+Its solution is the natural-gradient trust-region step
+\begin{equation}
+    x_r := \theta_{k+1/2}-\theta_k
+    = \sqrt{\frac{2\delta}{g^\top H^{-1}g}}\;H^{-1}g.
+    \label{eq:reward-step}
+\end{equation}
+If the implementation defines the quadratic constraint without the factor $1/2$, the scale becomes $\sqrt{\delta/(g^\top H^{-1}g)}$; this is the convention used in parts of the repository code where `delta = 2 * step\_size'.
+
+\subsection{Projection into the Robust Safe Region}
+Under the utility convention, the linearized robust safe set around $\theta_k$ is
+\begin{equation}
+    V_{c,p_c^k}^{\pi_k}(\rho)+h^\top(\theta-\theta_k)\ge d.
+    \label{eq:linear-safe-set}
+\end{equation}
+Let the current utility shortfall be
+\begin{equation}
+    b := d - V_{c,p_c^k}^{\pi_k}(\rho).
+\end{equation}
+Thus $b\le0$ means the current policy is locally feasible, and $b>0$ means it is locally infeasible.  The projection of $\theta_{k+1/2}=\theta_k+x_r$ in the KL metric is
+\begin{equation}
+    \min_\theta\;\half(\theta-\theta_{k+1/2})^\top H(\theta-\theta_{k+1/2})
+    \quad\text{s.t.}\quad
+    h^\top(\theta-\theta_k)\ge b.
+    \label{eq:utility-projection}
+\end{equation}
+The closed-form projected step is
+\begin{equation}
+    \boxed{
+    \theta_{k+1}=\theta_k+x_r+
+    \max\!\left\{\frac{b-h^\top x_r}{h^\top H^{-1}h},0\right\}H^{-1}h .}
+    \label{eq:utility-closed-form}
+\end{equation}
+This form says: take the reward-improving natural-gradient step; if that step does not satisfy the linearized utility threshold, add the smallest KL-metric correction in the direction that increases utility.
+
+\paragraph{Cost-style equivalent.}
+If using a cost $J_c(\theta)\le d_c$, define $h_c=\nabla J_c(\theta_k)$, $b_c=J_c(\theta_k)-d_c$, and require $h_c^\top(\theta-\theta_k)+b_c\le0$.  Then
+\begin{equation}
+    \theta_{k+1}=\theta_k+x_r-
+    \max\!\left\{\frac{h_c^\top x_r+b_c}{h_c^\top H^{-1}h_c},0\right\}H^{-1}h_c .
+    \label{eq:cost-closed-form}
+\end{equation}
+This is the sign convention closest to the repository optimizers and to the paper's displayed practical update.
+
+\section{Trajectory Processing and Advantage Estimation}
+The paper abstracts away much of the sampling machinery.  The repository fills in standard implementation details.
+
+\subsection{Reward Returns and GAE}
+For a sampled path, the code computes discounted reward returns
+\begin{equation}
+    \widehat R_t=\sum_{\ell=t}^{T-1}\gamma^{\ell-t}r_\ell.
+\end{equation}
+A reward baseline $\hat V_r(s)$ is fit to these returns.  Generalized advantage estimation (GAE) uses
+\begin{align}
+    \delta^r_t &= r_t+\gamma\hat V_r(s_{t+1})-\hat V_r(s_t),\\
+    \widehat A^r_t &= \sum_{\ell=t}^{T-1}(\gamma\lambda)^{\ell-t}\delta^r_\ell.
+\end{align}
+The reward policy surrogate is the likelihood-ratio objective
+\begin{equation}
+    L_r(\theta)=
+    \widehat\E_t\left[\frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_k}(a_t|s_t)}\widehat A^r_t\right].
+\end{equation}
+The implementation minimizes the negative of this surrogate, so its internal gradient signs are descent-oriented.
+
+\subsection{Utility/Safety Returns and GAE}
+The repository's `SafetyConstraint.evaluate(path)' creates per-step safety values from environment information.  For PointGather, `GatherSafetyConstraint' returns `path['env\_infos']['bombs']', i.e. bomb indicators.  Discounted safety returns are
+\begin{equation}
+    \widehat C_t=\sum_{\ell=t}^{T-1}\gamma_c^{\ell-t}c_\ell.
+\end{equation}
+With a safety baseline $\hat V_c$, safety GAE is
+\begin{align}
+    \delta^c_t &= c_t+\gamma_c\hat V_c(s_{t+1})-\hat V_c(s_t),\\
+    \widehat A^c_t &= \sum_{\ell=t}^{T-1}(\gamma_c\lambda_c)^{\ell-t}\delta^c_\ell.
+\end{align}
+The code can optimize using safety rewards, returns, or advantages; the RCPO experiment scripts use `safety\_gae\_lambda=1' and a safety baseline.
+
+\subsection{Linearization Constant and Gradient Rescaling}
+The projection constraint requires the actual current constraint value, not merely a centered advantage surrogate.  The sampler therefore computes a scalar `safety\_eval', typically the mean initial safety return of the newest batch.  It also computes `safety\_rescale' because the surrogate averages over state-action pairs while the true safety return is an expectation over trajectories.  If there are $N$ trajectories of average length $T$, then
+\begin{equation}
+    \frac{1}{NT}\sum_{i,t}\ell_{i,t}\widehat A^c_{i,t}
+\end{equation}
+under-scales the trajectory-level gradient by approximately $T$.  The code rescales the safety gradient so that the linearized constraint has the correct magnitude.
+
+\section{Computing Natural-Gradient Quantities}
+For neural policies, never form $H^{-1}$ explicitly.  Use conjugate gradient (CG) with Hessian-vector products.
+
+\begin{enumerate}[leftmargin=2em]
+    \item Compute $g$ as the flat gradient of the reward surrogate.  In the repository this is `flat\_g'; because the optimizer minimizes a loss, it is the gradient of the negative reward surrogate.
+    \item Build a Hessian-vector product function $v\mapsto Hv$ from the mean KL constraint using Pearlmutter's method or finite differences.
+    \item Solve $Hv_g=g$ by CG, obtaining $v_g\approx H^{-1}g$.
+    \item Compute $h$ as the flat gradient of the safety surrogate (`flat\_b' in the code).
+    \item Solve $Hv_h=h$ by CG, obtaining $v_h\approx H^{-1}h$.
+    \item Form inner products $q=g^\top H^{-1}g$, $r=h^\top H^{-1}g$, and $s=h^\top H^{-1}h$ to scale reward and projection terms.
+\end{enumerate}
+The KL optimizer uses $v_h$ for the correction.  The L2 variant uses the Euclidean safety gradient $h$ for the projection correction, corresponding to a Euclidean projection rather than a KL/Fisher projection.
+
+\section{Feasible and Infeasible Cases}
+The paper distinguishes whether the current policy satisfies the robust constraint.
+
+\subsection{Feasible Current Policy}
+If $V_c^{\pi_k}(\rho)\ge d$, the current policy lies in the robust safe set.  Under the paper's approximation assumption for worst-case kernels, RCPO gives a lower bound on worst-case reward change and an upper bound on constraint violation.  Qualitatively:
+\begin{itemize}[leftmargin=2em]
+    \item smaller trust-region radius $\delta$ reduces possible reward degradation from approximation error;
+    \item smaller $\delta$ also reduces robust constraint violation;
+    \item kernel approximation error $\epsilon$ appears as an additional degradation term for large/continuous-state implementations;
+    \item in tabular settings with accurate worst-case kernel estimation, $\epsilon$ can be made arbitrarily small.
+\end{itemize}
+The projection step is essential: robust reward improvement alone may produce an unsafe intermediate policy, but projecting maintains a local robust safety guarantee.
+
+\subsection{Infeasible Current Policy}
+If the current policy violates the robust constraint, let $b=d-V_c^{\pi_k}(\rho)>0$ denote the violation/shortfall.  Theorem 4.4 in the paper bounds the next policy using additional terms depending on $b$ and the KL projection geometry.  Qualitatively:
+\begin{itemize}[leftmargin=2em]
+    \item small violations lead to small additional reward and constraint degradation;
+    \item the projection correction becomes stronger as $b$ grows;
+    \item if the local trust region cannot intersect the safe halfspace, practical implementations must either take a recovery step that primarily improves safety, reduce the trust-region radius, or revert to a previous safe policy.
+\end{itemize}
+
+\section{Repository-Specific Implementation Notes}
+These notes are secondary to the paper algorithm but are useful for reproducing the codebase behavior.
+
+\subsection{Adversarial/Noise Environment as Robustness Approximation}
+The paper estimates worst-case transition kernels by projected gradient descent over $p\in\Pset$.  The repository does not implement this exact model-based kernel update for PointGather.  Instead, it constructs adversarial/noisy environments such as `PointGatherAdvEnv' and `PointGatherNegEnv'.  These environments query an adversary policy for a noise action, clip it, and add it to the nominal action before stepping the MuJoCo environment.  The RCPO experiment alternates:
+\begin{enumerate}[leftmargin=2em]
+    \item train the main policy in an environment perturbed by the current adversary policy;
+    \item train the adversary/noise policy in a transformed environment using the current main policy.
+\end{enumerate}
+This is a practical approximation to model mismatch: instead of directly searching over $\Pset$, it searches over a parameterized family of perturbations that induce adverse transitions.
+
+\subsection{KL and L2 Projected Variants}
+The repository has two projected optimizers:
+\begin{itemize}[leftmargin=2em]
+    \item `PCPO\_KL': reward step plus a KL/Fisher-metric safety correction proportional to $H^{-1}h$.
+    \item `PCPO\_L2': reward step plus a Euclidean safety correction proportional to $h$.
+\end{itemize}
+Both compute a reward-only natural-gradient step and then add a projection/correction term.  The code logs `pcpo\_reward', `pcpo\_cost', and `pcpo\_cost\_scaledByBeta' for the two components.
+
+\subsection{Line Search and Fallbacks}
+The optimizer categorizes cases using the current linearized constraint value $c$, the trust-region/safety geometry, and quantities
+\begin{equation}
+    q=g^\top H^{-1}g,
+    \qquad r=h^\top H^{-1}g,
+    \qquad s=h^\top H^{-1}h.
+\end{equation}
+The cases correspond roughly to:
+\begin{center}
+\begin{tabular}{cl}
+\toprule
+Case & Meaning \\
+\midrule
+4 & safety gradient is effectively zero; ignore linear safety constraint \\
+3 & current point feasible and the whole trust region is safe \\
+2 & current point feasible but the safety boundary intersects the trust region \\
+1 & current point infeasible but part of the trust region can recover feasibility \\
+0 & current point infeasible and local trust region does not intersect safety boundary \\
+\bottomrule
+\end{tabular}
+\end{center}
+Depending on settings, the optimizer can attempt feasible recovery, infeasible recovery, line search on loss/KL/linear safety, or revert to a last safe point.  These are engineering safeguards around the paper's projection idea.
+
+\subsection{Diagnostics}
+The helper `record\_projected\_step\_metrics' logs:
+\begin{itemize}[leftmargin=2em]
+    \item directional retention: how much of the reward-only step remains along its original direction;
+    \item directional alignment: cosine similarity between final and reward-only steps;
+    \item norm ratio: size of the final projected step relative to the reward-only step.
+\end{itemize}
+These diagnostics are not part of the paper's theoretical RCPO, but they are useful for seeing whether projection is mildly correcting or nearly replacing the reward update.
+
+\section{Implementation Checklist}
+A functional RCPO implementation should include the following pieces.
+
+\begin{enumerate}[leftmargin=2em]
+    \item \textbf{Inputs:} policy class, nominal model or simulator, uncertainty set $\Pset$ or adversarial perturbation class, reward $r$, utility $c$, threshold $d$, discount $\gamma$, KL radius $\delta$, kernel step sizes $\beta_t$, batch size, horizon, and number of iterations.
+    \item \textbf{Worst-case reward kernel:} for each $k$, estimate $p_r^k$ with projected gradient descent or a learned adversary/perturbation approximation.
+    \item \textbf{Worst-case utility kernel:} separately estimate $p_c^k$; do not assume it equals $p_r^k$.
+    \item \textbf{Sampling/evaluation:} collect trajectories under $\pi_k$ and the estimated worst-case kernels, or under the adversarial simulator that approximates them.
+    \item \textbf{Returns and baselines:} compute reward returns, utility returns, fit reward and utility baselines, and compute reward/utility GAE.
+    \item \textbf{Surrogates:} build likelihood-ratio reward and utility advantage surrogates.
+    \item \textbf{KL Hessian:} build Hessian-vector products for the mean KL around $\pi_k$.
+    \item \textbf{CG solves:} compute $H^{-1}g$ and $H^{-1}h$ approximately.
+    \item \textbf{Reward step:} compute $x_r=\sqrt{2\delta/(g^\top H^{-1}g)}H^{-1}g$.
+    \item \textbf{Projection:} compute the linearized constraint violation and add the KL-metric correction in Eq.~\eqref{eq:utility-closed-form}, or the cost-style correction in Eq.~\eqref{eq:cost-closed-form}.
+    \item \textbf{Validation/line search:} check actual surrogate improvement, KL radius, numerical finite values, and linearized/empirical safety.  Backtrack or recover if necessary.
+    \item \textbf{Logging:} record reward return, robust or adversarial safety return, KL, loss change, safety threshold, safety gradient scale, projection magnitude, and optimizer case.
+    \item \textbf{Stopping:} stop after fixed iterations, convergence of robust reward/safety metrics, or failure to find stable safe updates.
+\end{enumerate}
+
+\section{Summary}
+RCPO extends trust-region policy optimization to robust constrained RL by recognizing that model mismatch changes the worst-case transition kernel and that reward and utility can have different worst-case kernels.  Each iteration first estimates these kernels, then uses a robust performance-difference approximation to improve reward locally, and finally projects the intermediate policy into a robust safe region.  The practical algorithm is a natural-gradient method using CG solves for $H^{-1}g$ and $H^{-1}h$, with projection correcting unsafe reward steps.  The repository approximates the paper's worst-case-kernel machinery with an adversarial/noise-policy environment and implements the projected safe update with KL and L2 variants.
+
+\end{document}

@@ -1,0 +1,400 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts,mathtools}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+\newcommand{\Sset}{\mathcal S}
+\newcommand{\Aset}{\mathcal A}
+\newcommand{\Pset}{\mathcal P}
+\newcommand{\Fset}{\mathcal F}
+\newcommand{\E}{\mathbb E}
+\newcommand{\R}{\mathbb R}
+\newcommand{\KL}{D_{\mathrm{KL}}}
+\newcommand{\TV}{d_{\mathrm{TV}}}
+\newcommand{\argmax}{\operatorname*{arg\,max}}
+\newcommand{\argmin}{\operatorname*{arg\,min}}
+\newcommand{\1}{\mathbf 1}
+\newcommand{\epsapp}{\epsilon_{\mathrm{approx}}}
+
+\title{Rectified Robust Policy Optimization (RRPO):\\
+A Standalone Algorithmic and Mathematical Description}
+\author{Distilled from \emph{Rectified Robust Policy Optimization for Model-Uncertain Constrained Reinforcement Learning without Strong Duality}}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Purpose and Scope}
+This document distills Rectified Robust Policy Optimization (RRPO) into a self-contained algorithmic description.  The source paper is Ma, Chen, Zhou, and Huang, \emph{Rectified Robust Policy Optimization for Model-Uncertain Constrained Reinforcement Learning without Strong Duality}, published in Transactions on Machine Learning Research in 2025.  No implementation code was available, so this document relies on the paper and explicitly flags implementation choices where a codebase would normally disambiguate details.
+
+RRPO solves robust constrained reinforcement learning (RL) when transition dynamics are uncertain.  The central design choice is \emph{not} to solve a Lagrangian saddle-point problem.  The paper first shows that strong duality can fail in robust constrained MDPs, so primal-dual methods may not recover an optimal feasible policy.  RRPO instead works directly in the primal policy space.  It alternates between:
+\begin{enumerate}[leftmargin=2em]
+    \item robust policy evaluation for the objective and every constraint;
+    \item threshold tracking for the best feasible objective level found so far;
+    \item rectification updates that improve either a violated constraint or a lagging objective value.
+\end{enumerate}
+
+\section{Robust MDP and Robust Constrained MDP}
+\subsection{Robust MDP}
+A robust Markov decision process is
+\[
+    (\Sset,\Aset,\Pset,r,\gamma,\mu),
+\]
+where $\Sset$ and $\Aset$ are finite state and action spaces, $\gamma\in[0,1)$ is the discount factor, $\mu\in\Delta(\Sset)$ is the initial-state distribution, and $\Pset$ is an uncertainty set of transition kernels.  A policy $\pi:\Sset\to\Delta(\Aset)$ maps each state to an action distribution.
+
+For a fixed policy $\pi$, the robust value function is the worst-case discounted return
+\begin{equation}
+    V^\pi(s)
+    =\inf_{P\in\Pset}
+    \E_{\pi,P}\!\left[\sum_{t=0}^{\infty}\gamma^t r(s_t,a_t)\mid s_0=s\right],
+    \label{eq:robust-value-single}
+\end{equation}
+with $V^\pi(\mu)=\E_{s\sim\mu}[V^\pi(s)]$.  A worst-case transition kernel for $\pi$ is any minimizer
+\begin{equation}
+    P^\pi\in\argmin_{P\in\Pset} V_P^\pi(\mu).
+\end{equation}
+The paper allows general uncertainty sets as long as robust policy evaluation is available.  Common examples include $s$-rectangular sets
+\begin{equation}
+    \Pset=\times_{s\in\Sset}\Pset_s,
+\end{equation}
+and $(s,a)$-rectangular sets
+\begin{equation}
+    \Pset=\times_{(s,a)\in\Sset\times\Aset}\Pset_{s,a}.
+\end{equation}
+
+\subsection{Robust Constrained MDP}
+RRPO considers one objective reward and $I$ constraint rewards:
+\begin{equation}
+    r_i:\Sset\times\Aset\to\R,
+    \qquad i=0,1,\ldots,I.
+\end{equation}
+Here $r_0$ is the objective reward.  For $i\ge1$, $r_i$ is a constraint reward, chosen so that larger is safer or more desirable.  Define robust values
+\begin{equation}
+    V_i^\pi(s)
+    =\inf_{P\in\Pset}\E_{\pi,P}\!\left[\sum_{t=0}^{\infty}\gamma^t r_i(s_t,a_t)\mid s_0=s\right],
+    \qquad
+    V_i^\pi(\mu)=\E_{s\sim\mu}[V_i^\pi(s)].
+    \label{eq:robust-values-all}
+\end{equation}
+The robust constrained problem is
+\begin{equation}
+    \boxed{
+    \max_\pi V_0^\pi(\mu)
+    \quad\text{s.t.}\quad
+    V_i^\pi(\mu)\ge d_i,
+    \quad i=1,\ldots,I.}
+    \label{eq:robust-constrained-problem}
+\end{equation}
+The inequality direction follows the paper: $r_i$ is a constraint reward or utility and must stay above threshold $d_i$ in the worst case.  If an implementation uses costs $C_i^\pi\le b_i$, set $r_i=-c_i$ and $d_i=-b_i$, or translate each rectification step by minimizing cost instead of maximizing utility.
+
+\subsection{Robust Action Values and Advantages}
+RRPO's policy update uses robust $Q$-functions.  For each $i$,
+\begin{equation}
+    Q_i^\pi(s,a)
+    =\inf_{P\in\Pset}\E_{\pi,P}\!\left[\sum_{t=0}^{\infty}\gamma^t r_i(s_t,a_t)\mid s_0=s,a_0=a\right].
+\end{equation}
+A corresponding robust advantage is
+\begin{equation}
+    A_i^\pi(s,a)=Q_i^\pi(s,a)-V_i^\pi(s).
+\end{equation}
+The algorithm assumes access to approximations $\widehat Q_i^\pi$ with bounded error.  Robust policy evaluation is therefore a core subroutine rather than a minor detail.
+
+\section{Why RRPO Avoids Primal-Dual Optimization}
+The paper defines the Lagrangian
+\begin{equation}
+    L(\pi,\lambda)=V_0^\pi(\mu)-\sum_{i=1}^{I}\lambda_i(d_i-V_i^\pi(\mu)),
+    \qquad \lambda_i\ge0.
+\end{equation}
+The primal and dual values are
+\begin{align}
+    \text{Primal} &= \max_\pi\min_{\lambda\ge0}L(\pi,\lambda),\\
+    \text{Dual} &= \min_{\lambda\ge0}\max_\pi L(\pi,\lambda).
+\end{align}
+For standard non-robust CMDPs, strong duality often permits primal-dual algorithms.  The paper constructs a robust constrained MDP whose duality gap is strictly positive.  The issue is that robust values include an inner worst-case transition selection, and this can break the convexity/concavity structure used in the usual strong-duality argument.  Thus, a Lagrangian saddle point may fail to represent the original robust constrained optimum.
+
+RRPO is motivated by this failure.  It is a primal-only method: it never updates Lagrange multipliers and never relies on strong duality.
+
+\section{Rectified Primal Reformulation}
+The paper introduces an auxiliary threshold $d_0$ for the objective and rewrites the problem as
+\begin{equation}
+    \max_{d_0,\pi} d_0
+    \quad\text{s.t.}\quad
+    V_0^\pi(\mu)\ge d_0,
+    \qquad
+    V_i^\pi(\mu)\ge d_i,
+    \; i=1,\ldots,I.
+    \label{eq:epigraph-like-rrpo}
+\end{equation}
+This is not a dual formulation.  It is a way to convert objective optimization into a tracked feasibility requirement: once a policy reaches a good robust objective value, RRPO stores that value as a new target and later rectifies the objective if subsequent updates fall below it.
+
+Let $\delta>0$ be a tolerance.  RRPO maintains:
+\begin{itemize}[leftmargin=2em]
+    \item a policy sequence $\pi_t=\pi_{\theta_t}$;
+    \item a current objective threshold $d_0^t$;
+    \item a set $\mathcal N_0$ of policy parameters that are feasible within tolerance;
+    \item an output policy $\pi_{\mathrm{out}}$, chosen as the feasible policy with the largest robust objective found so far.
+\end{itemize}
+
+\section{Robust Natural Policy Gradient Update}
+For any selected index $i\in\{0,1,\ldots,I\}$, RRPO maximizes $V_i^\pi(\mu)$ using a robust natural policy gradient (NPG) update.  In policy-distribution form, the update is
+\begin{equation}
+    \pi_{t+1}(a\mid s)
+    =\frac{\pi_t(a\mid s)\exp\!\left(\eta\widehat Q_i^{\pi_t}(s,a)/(1-\gamma)\right)}
+    {Z_t(s)},
+    \label{eq:rrpo-npg-policy}
+\end{equation}
+where
+\begin{equation}
+    Z_t(s)=\sum_{a\in\Aset}\pi_t(a\mid s)
+    \exp\!\left(\eta\widehat Q_i^{\pi_t}(s,a)/(1-\gamma)\right)
+\end{equation}
+and $\eta>0$ is the learning rate.  This is an exponentiated-gradient or mirror-descent style update in policy space.
+
+For tabular softmax parameters
+\begin{equation}
+    \pi_\theta(a\mid s)=\frac{\exp(\theta(s,a))}{\sum_{a'}\exp(\theta(s,a'))},
+\end{equation}
+the same update is equivalent to
+\begin{equation}
+    \theta_{t+1}(s,a)=\theta_t(s,a)+\eta\widehat Q_i^{\pi_t}(s,a).
+    \label{eq:rrpo-softmax-update}
+\end{equation}
+Thus, implementation only needs to decide which robust value $i$ to improve, estimate $\widehat Q_i^{\pi_t}$, and apply Eq.~\eqref{eq:rrpo-npg-policy} or Eq.~\eqref{eq:rrpo-softmax-update}.
+
+\paragraph{Function approximation note.}
+For neural policies, Eq.~\eqref{eq:rrpo-npg-policy} is typically implemented approximately: build a policy-gradient objective using $\widehat Q_i$ or an advantage estimate, then take a natural-gradient/TRPO-style step or a mirror-descent-like update.  The paper's displayed equivalence is exact for tabular softmax parameterization.
+
+\section{RRPO Algorithm}
+\begin{algorithm}[H]
+\caption{Rectified Robust Policy Optimization (RRPO)}
+\label{alg:rrpo}
+\begin{algorithmic}[1]
+\Require initial parameters $\theta_0$, policy $\pi_0=\pi_{\theta_0}$, thresholds $d_1,\ldots,d_I$, initial objective threshold $d_0^0$ (often $-\infty$ or a conservative value), tolerance $\delta$, learning rate $\eta$, horizon/iterations $T$.
+\State Initialize feasible set $\mathcal N_0\gets\emptyset$ and output policy $\pi_{\mathrm{out}}\gets$ null.
+\For{$t=0,1,\ldots,T-1$}
+    \State Robustly evaluate current policy: estimate $\widehat Q_i^{\pi_t}(s,a)\approx Q_i^{\pi_t}(s,a)$ for all $i=0,1,\ldots,I$.
+    \State Estimate robust scalar values $\widehat V_i^{\pi_t}(\mu)$ for all $i=0,1,\ldots,I$.
+    \If{$\widehat V_i^{\pi_t}(\mu)\ge d_i-\delta$ for all $i=1,\ldots,I$ \textbf{and} $\widehat V_0^{\pi_t}(\mu)\ge d_0^t-\delta$}
+        \State \textbf{Threshold update:} add $\theta_t$ to $\mathcal N_0$.
+        \If{$\pi_{\mathrm{out}}$ is null or $\widehat V_0^{\pi_t}(\mu)>\widehat V_0^{\pi_{\mathrm{out}}}(\mu)$}
+            \State Set $\pi_{\mathrm{out}}\gets\pi_t$.
+        \EndIf
+        \State Update objective threshold $d_0^{t+1}\gets \max\{d_0^t,\widehat V_0^{\pi_t}(\mu)\}$.
+        \State Optionally keep $\theta_{t+1}\gets\theta_t$ or perform another objective-improvement step; the paper's pseudocode emphasizes threshold tracking here.
+    \ElsIf{there exists a constraint $i\in\{1,\ldots,I\}$ with $\widehat V_i^{\pi_t}(\mu)<d_i-\delta$}
+        \State \textbf{Constraint rectification:} choose a violated constraint index $i_t$.
+        \State Update $\pi_t$ to maximize $V_{i_t}^{\pi}(\mu)$ using Eq.~\eqref{eq:rrpo-npg-policy} or Eq.~\eqref{eq:rrpo-softmax-update} with $\widehat Q_{i_t}^{\pi_t}$.
+        \State Set $d_0^{t+1}\gets d_0^t$.
+    \ElsIf{$\widehat V_0^{\pi_t}(\mu)<d_0^t-\delta$}
+        \State \textbf{Objective rectification:} update $\pi_t$ to maximize $V_0^{\pi}(\mu)$ using Eq.~\eqref{eq:rrpo-npg-policy} or Eq.~\eqref{eq:rrpo-softmax-update} with $\widehat Q_0^{\pi_t}$.
+        \State Set $d_0^{t+1}\gets d_0^t$.
+    \EndIf
+\EndFor
+\State \Return $\pi_{\mathrm{out}}$.
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{The Three RRPO Branches}
+\paragraph{Threshold update.}
+If the current policy satisfies all robust constraints within tolerance and also meets the current objective threshold, RRPO records it as a candidate output policy and updates $d_0$ to the current robust objective value.  This is what lets RRPO remember the best feasible policy found so far.
+
+\paragraph{Constraint rectification.}
+If a robust constraint falls below its threshold by more than $\delta$, the next update ignores the objective and improves that constraint's robust value.  This pulls the policy back toward feasibility without using a dual multiplier.
+
+\paragraph{Objective rectification.}
+If constraints are acceptable but the robust objective has fallen below $d_0^t-\delta$, the next update improves the robust objective.  This prevents the algorithm from drifting too far below the best feasible objective level already discovered.
+
+\subsection{Choosing a Violated Constraint}
+The paper states that if some constraint is violated, RRPO maximizes a violated constraint value.  When multiple constraints are violated, an implementation must choose one.  Reasonable choices are:
+\begin{itemize}[leftmargin=2em]
+    \item most violated: $i_t\in\argmax_i(d_i-\widehat V_i^{\pi_t}(\mu))$;
+    \item first violated constraint in a fixed order;
+    \item random violated constraint, which matches some CRPO-style analyses.
+\end{itemize}
+For reproducibility, use the most-violated rule unless another choice is required by an experiment.
+
+\section{Robust Policy Evaluation}
+RRPO assumes a robust policy evaluation module.  For each reward/constraint channel $i$, the evaluator returns robust $\widehat Q_i^\pi$ and scalar $\widehat V_i^\pi(\mu)$ estimates.
+
+\subsection{Generic Robust Bellman Form}
+For a fixed policy and reward $r_i$, a robust Bellman equation has the form
+\begin{equation}
+    V_i^\pi(s)
+    =\sum_{a}\pi(a\mid s)\left[r_i(s,a)+\gamma\inf_{P\in\Pset_{s,a}}\E_{s'\sim P(\cdot\mid s,a)}V_i^\pi(s')\right]
+\end{equation}
+for $(s,a)$-rectangular uncertainty.  The robust $Q$-function is
+\begin{equation}
+    Q_i^\pi(s,a)=r_i(s,a)+\gamma\inf_{P\in\Pset_{s,a}}\E_{s'\sim P(\cdot\mid s,a)}V_i^\pi(s').
+    \label{eq:robust-q-bellman}
+\end{equation}
+For other uncertainty structures, replace the inner infimum with the corresponding robust Bellman operator.
+
+\subsection{IPM Uncertainty Example}
+For an integral probability metric (IPM) uncertainty set, let $\Fset\subset\R^{|\Sset|}$ contain the zero function and define
+\begin{equation}
+    d_{\Fset}(p,q)=\sup_{f\in\Fset}\{p^\top f-q^\top f\}.
+\end{equation}
+Then
+\begin{equation}
+    \Pset_{s,a}=\{P_{s,a}:d_{\Fset}(P_{s,a},P_0(\cdot\mid s,a))\le\beta\}.
+\end{equation}
+The paper gives a robust linear TD example for a value approximation $V_w(s)=\psi(s)^\top w$:
+\begin{equation}
+    w_{k+1}=w_k+\alpha_k\psi(s_k)\left[r(s_k,a_k)+\gamma V_{w_k}(y_{k+1})-\gamma\beta\|w_{k,2:d}\|-\psi(s_k)^\top w_k\right].
+    \label{eq:ipm-td}
+\end{equation}
+This update subtracts a robust correction term from the nominal TD target.
+
+\subsection{$p$-Norm Uncertainty Example}
+For each $(s,a)$, define
+\begin{equation}
+    \mathcal U_{s,a}=\{u\in\R^{|\Sset|}:\langle u,\1\rangle=0,\|u\|_p\le\beta\},
+    \qquad
+    \Pset_{s,a}=\{P_0(\cdot\mid s,a)+u:u\in\mathcal U_{s,a}\}.
+\end{equation}
+Let $q$ satisfy $1/p+1/q=1$.  The paper cites a closed-form worst-case perturbation
+\begin{equation}
+    P_+(\cdot\mid s,a)=P_0(\cdot\mid s,a)-\beta O_{\beta,p}(V),
+\end{equation}
+where
+\begin{equation}
+    O_{\beta,p}(V)(s')
+    =\beta\frac{\operatorname{sign}(V(s')-\omega_q(V))|V(s')-\omega_q(V)|^{q-1}}{\kappa_q(V)^{q-1}},
+\end{equation}
+with
+\begin{equation}
+    \omega_q(V)=\argmin_\omega\|V-\omega\1\|_q,
+    \qquad
+    \kappa_q(V)=\min_\omega\|V-\omega\1\|_q.
+\end{equation}
+A corresponding TD-style robust update is
+\begin{equation}
+    V(s)\leftarrow V(s)+\alpha\left[r(s,a)+\gamma V(s')-V(s)-\gamma\langle O_{\beta,p}(V),V\rangle\right].
+    \label{eq:pnorm-td}
+\end{equation}
+The key implementation idea is that the robust target equals a nominal TD target plus a correction for the worst-case transition shift.
+
+\subsection{Practical Evaluation Loop}
+For each RRPO iteration and each $i=0,\ldots,I$:
+\begin{enumerate}[leftmargin=2em]
+    \item collect transitions under the current policy, usually from the nominal simulator or online environment;
+    \item apply the robust Bellman/TD evaluator appropriate to the uncertainty set;
+    \item estimate $\widehat Q_i^{\pi_t}(s,a)$ for policy updates;
+    \item estimate $\widehat V_i^{\pi_t}(\mu)$ by evaluating initial states or averaging $\widehat V_i(s)$ over $s\sim\mu$.
+\end{enumerate}
+The paper's guarantees assume uniform evaluation accuracy:
+\begin{equation}
+    |\widehat Q_i^\pi(s,a)-Q_i^\pi(s,a)|\le\epsapp
+    \quad\forall s,a,i.
+    \label{eq:q-accuracy}
+\end{equation}
+
+\section{Convergence Guarantees}
+The main theorem requires three key conditions.
+
+\paragraph{Policy evaluation accuracy.}
+The robust $Q$ estimates satisfy Eq.~\eqref{eq:q-accuracy}.
+
+\paragraph{Worst-case exploration.}
+For every policy $\pi$ and its worst-case transition $P$, there is $p_{\min}>0$ such that
+\begin{equation}
+    d_{\mu}^{\pi,P}(s)\ge p_{\min}\quad\forall s\in\Sset,
+\end{equation}
+where $d_{\mu}^{\pi,P}$ is the discounted state visitation distribution under $\pi$ and $P$.  This ensures robust evaluation and policy improvement are not starved of state coverage.
+
+\paragraph{Bounded uncertainty diameter.}
+There is $c\ge0$ such that
+\begin{equation}
+    \sup_{P,P'\in\Pset}\sup_{s,a}\TV(P(\cdot\mid s,a),P'(\cdot\mid s,a))\le c.
+    \label{eq:diameter}
+\end{equation}
+This diameter controls the irreducible error caused by model uncertainty.
+
+\subsection{Simplified Theorem}
+With learning rate $\eta=\Theta(1/\sqrt T)$, tolerance
+\begin{equation}
+    \delta=\Theta(1/\sqrt T)+O(c),
+\end{equation}
+and robust evaluation error
+\begin{equation}
+    \epsapp=\Theta(1/\sqrt T),
+\end{equation}
+the paper proves that the returned policy satisfies
+\begin{equation}
+    \E[V^*(\mu)-V_0^{\pi_{\mathrm{out}}}(\mu)] = O(1/\sqrt T)+O(c),
+\end{equation}
+and
+\begin{equation}
+    \max_{i=1,\ldots,I}\{d_i-V_i^{\pi_{\mathrm{out}}}(\mu)\}\le\delta.
+\end{equation}
+Here $V^*=V_0^{\pi^*}(\mu)$ is the robust objective value of an optimal feasible policy.  Thus RRPO converges to an approximately optimal feasible policy up to a tolerance set by finite iterations, robust evaluation error, and the uncertainty diameter.
+
+\subsection{Sample Complexity Interpretation}
+If $T=O(\epsilon^{-2})$ iterations are needed for an $O(\epsilon)+O(c)$ optimality neighborhood, and each robust $Q$ evaluation costs $K=O(\epsilon^{-2})$ samples, then total sample complexity is
+\begin{equation}
+    T\cdot K=O(\epsilon^{-4}).
+\end{equation}
+The paper presents this calculation for the $(s,a)$-rectangular $p$-norm uncertainty example.
+
+\section{Implementation Blueprint}
+A functional RRPO implementation should include the following components.
+
+\subsection{Inputs}
+\begin{itemize}[leftmargin=2em]
+    \item finite or approximated state/action spaces $\Sset,\Aset$;
+    \item policy parameterization $\pi_\theta$;
+    \item reward channels $r_0,r_1,\ldots,r_I$;
+    \item thresholds $d_1,\ldots,d_I$;
+    \item uncertainty set description $\Pset$ and robust evaluator;
+    \item discount $\gamma$, NPG step size $\eta$, tolerance $\delta$, iterations $T$;
+    \item initial objective threshold $d_0^0$ and initial policy $\theta_0$.
+\end{itemize}
+
+\subsection{Per-Iteration Procedure}
+\begin{enumerate}[leftmargin=2em]
+    \item Roll out or sample transitions under $\pi_t$.
+    \item For each $i=0,\ldots,I$, compute $\widehat V_i^{\pi_t}$ and $\widehat Q_i^{\pi_t}$ using robust policy evaluation.
+    \item Check robust constraint feasibility: $\widehat V_i^{\pi_t}(\mu)\ge d_i-\delta$ for all $i\ge1$.
+    \item Check objective threshold feasibility: $\widehat V_0^{\pi_t}(\mu)\ge d_0^t-\delta$.
+    \item If both checks pass, record the policy as feasible, update $\pi_{\mathrm{out}}$ if it is the best feasible policy so far, and raise $d_0$ to the current objective value if larger.
+    \item If a robust constraint fails, choose a violated constraint $i_t$ and update the policy with $\widehat Q_{i_t}$.
+    \item Else if the objective is below threshold, update with $\widehat Q_0$.
+    \item Log all robust values, threshold $d_0$, selected update index $i_t$, constraint violations, and current output policy value.
+\end{enumerate}
+
+\subsection{Numerical Stability and Practical Choices}
+\begin{itemize}[leftmargin=2em]
+    \item Keep policies stochastic enough for worst-case exploration; entropy regularization or minimum action probabilities can help.
+    \item Clip or normalize $\widehat Q_i$ if exponentiated updates overflow.
+    \item Re-estimate $\pi_{\mathrm{out}}$ robust values periodically with a larger evaluation budget.
+    \item Use separate critics for each reward channel $i$, or a multi-head critic sharing lower layers.
+    \item In cost-based environments, convert signs consistently before comparing to thresholds.
+    \item When robust evaluation is expensive, cache value estimates but refresh them after every policy update.
+\end{itemize}
+
+\section{RRPO vs. Related Algorithms}
+\begin{center}
+\begin{tabular}{p{0.24\linewidth}p{0.66\linewidth}}
+\toprule
+Algorithm & Main distinction \\
+\midrule
+Primal-dual robust RL & Optimizes a Lagrangian and can be affected by nonzero robust constrained duality gap. \\
+CRPO & Primal-only for non-robust constrained RL; switches between objective and violated constraints but does not use RRPO's robust evaluation and objective-threshold rectification. \\
+Robust CRPO & A natural baseline that replaces CRPO values with robust values; the paper's ablation indicates higher variance/oscillation than RRPO because it lacks the rectified threshold/output tracking. \\
+RRPO & Primal-only, robust-value-based, tracks best feasible objective threshold $d_0$, and rectifies either constraints or objective depending on robust feasibility. \\
+RCPO & Trust-region/projection-style robust constrained method; RRPO instead uses CRPO-style primal rectification and robust NPG, motivated by avoiding strong duality. \\
+Robust policy gradient & Optimizes robust reward but need not enforce constraints; RRPO uses constraint-specific rectification branches. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Summary}
+RRPO is a primal-only robust constrained RL algorithm designed for settings where strong duality may fail.  It uses robust policy evaluation to estimate worst-case values for the objective and all constraints.  It then either records and raises an objective threshold when the current policy is robustly feasible, rectifies violated constraints by maximizing their robust values, or rectifies the objective when it falls below the best tracked threshold.  The policy update is a robust natural policy gradient update using robust $Q$-functions.  Under robust evaluation accuracy, worst-case exploration, and bounded uncertainty diameter assumptions, RRPO returns an approximately optimal feasible policy with error $O(1/\sqrt T)+O(c)$ and constraint violation bounded by the chosen tolerance.
+
+\end{document}

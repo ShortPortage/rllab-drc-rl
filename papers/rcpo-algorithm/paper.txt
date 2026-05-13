@@ -1,0 +1,1437 @@
+               Constrained Reinforcement Learning Under Model Mismatch
+
+
+                               Zhongchang Sun 1 Sihong He 2 Fei Miao 2 Shaofeng Zou 1 3
+
+
+                          Abstract                                      The framework of constrained Markov Decision Process
+                                                                        (CMDP) was developed (Altman, 1999) to tackle the above
+       Existing studies on constrained reinforcement
+                                                                        challenge and the goal is to search for one policy that maxi-
+       learning (RL) may obtain a well-performing pol-
+                                                                        mizes the overall reward among the policies that satisfy the
+       icy in the training environment. However, when
+                                                                        constraint, and an optimal policy for CMDP can be found
+       deployed in a real environment, it may easily vio-
+                                                                        via linear programming.
+       late constraints that were originally satisfied dur-
+       ing training because there might be model mis-                   When a well-performing policy trained using a simulator is
+       match between the training and real environments.                deployed in a real environment, it may easily violate con-
+       To address this challenge, we formulate the prob-                straints that were originally satisfied during training because
+       lem as constrained RL under model uncertainty,                   there might be model mismatch between the training and
+       where the goal is to learn a policy that optimizes               real environments. This could be due to environment non-
+       the reward and at the same time satisfies the con-               stationarity, sim-to-real gap and adversarial attacks. Despite
+       straint under model mismatch. We develop a Ro-                   its practical importance, studies on the problem of robust
+       bust Constrained Policy Optimization (RCPO) al-                  RL under constraints are rather limited in the literature. Sev-
+       gorithm, which is the first algorithm that applies               eral attempts were made in (Russel et al., 2020; Mankowitz
+       to large/continuous state space and has theoreti-                et al., 2020), where two heuristic approaches were proposed.
+       cal guarantees on worst-case reward improvement                  Their basic idea is to first evaluate the worst-case perfor-
+       and constraint violation at each iteration during                mance of the policy over the uncertainty set, and then use
+       the training. We show the effectiveness of our                   that together with classical policy improvement methods,
+       algorithm on a set of RL tasks with constraints.                 e.g., policy gradient, to update the policy. However, there is
+                                                                        no guarantee to obtain an improved robust policy by doing
+                                                                        so. A robust primal-dual approach was developed in (Wang
+1. Introduction                                                         et al., 2022), which however cannot guarantee monotonic
+                                                                        robust reward improvement or constraint satisfaction dur-
+In reinforcement learning (RL), the agent aims to learn a
+                                                                        ing the training. Also, the results in (Wang et al., 2022) are
+policy that maximizes the expected cumulative reward by
+                                                                        limited to the tabular case with finite state and action spaces.
+interacting with an environment (Sutton & Barto, 2018).
+However, in real-life applications, e.g., robotics (Levine              In this paper, we study the problem of constrained RL un-
+et al., 2016; Ono et al., 2015), health care (Yu et al., 2019a),        der model mismatch. Specifically, we consider an uncer-
+autonomous driving (Kiran et al., 2020; Fisac et al., 2018;             tainty set of transition kernels that characterizes the potential
+He et al., 2023a;b) and industry automation (Gasparik et al.,           model mismatch (see (Siddique et al., 2019) for an example
+2018), where it is crucial to meet constraints while maximiz-           of uncertainty set construction). The goal is to guarantee
+ing reward, application of RL remains limited. For example,             that for any MDP in the uncertainty set, the constraint is
+an unmanned aerial vehicle performing post-disaster search              always satisfied. Among these policies, we aim to identify
+and rescue needs to return before running out of battery, and           one that maximizes the worst-case accumulated reward over
+communication system needs to maximize throughput while                 the uncertainty set. Solution to the above problem is robust
+adhering to power consumption constraints.                              in that for any MDP in the uncertainty set, the constraint is
+   1
+                                                                        always satisfied, and at the same time, the overall reward of
+     Department of Electrical Engineering, University at Buffalo,       the obtained policy is also robust to model mismatch.
+New York, USA 2 School of Computing, University of Connecti-
+cut, Storrs, USA 3 Department of Computer Science & Engineer-           We develop a robust constrained policy optimization
+ing, University at Buffalo, New York, USA. Correspondence to:           (RCPO) algorithm, and theoretically bound the constraint
+Shaofeng Zou <szou3@buffalo.edu>.
+                                                                        violation for any transition kernel in the uncertainty set , and
+Proceedings of the 41 st International Conference on Machine            the worst-case reward improvement over the uncertainty set
+Learning, Vienna, Austria. PMLR 235, 2024. Copyright 2024 by            for every policy during training. One thing to highlight is
+the author(s).
+
+                                                                    1
+                                 Constrained Reinforcement Learning Under Model Mismatch
+
+that our algorithm applies to Markov Decision Processes               of the most commonly used method (Altman, 1999; Auer
+(MDPs) with continuous state space, which allows applica-             et al., 2008; Liang et al., 2018; Paternain et al., 2019; Tessler
+tions to large scale practical problems.                              et al., 2018; Yu et al., 2019b; Stooke et al., 2020; Efroni
+                                                                      et al., 2020; Zheng & Ratliff, 2020; Zhang et al., 2020),
+One essential theoretical result that drives our RCPO algo-
+                                                                      which converts the constrained optimization problem to
+rithm development is a generalization of the performance
+                                                                      an unconstrained Lagrangian formulation and alternatively
+difference lemma (Kakade & Langford, 2002; Achiam et al.,
+                                                                      updates the primal and dual variables. Thanks to the strong
+2017) to robust MDPs. Specifically, we consider the robust
+                                                                      duality of the non-robust CMDPs (Paternain et al., 2019),
+value function, which measures the worst-case performance
+                                                                      the problem can be solved exactly in the dual domain and the
+of a policy over the uncertainty set. We bound the difference
+                                                                      primal-dual method is guaranteed to converge to the optimal
+between robust value functions for two different policies
+                                                                      solution (Ding et al., 2020; 2021; Li et al., 2021; Liu et al.,
+using the difference between the two policies.
+                                                                      2021; Ying et al., 2021; Wei et al., 2022). Another widely
+Our algorithm consists of two steps for each update: (i)              studied method is the primal method (Chow et al., 2018;
+robust policy improvement step and (ii) projection.                   Dalal et al., 2018; Liu et al., 2020; Xu et al., 2021; Bura et al.,
+                                                                      2022), which takes all the updates in the primal domain
+Step (i) uses our robust performance difference lemma to de-
+                                                                      without formulating the Lagrangian function. The trust
+velop a local approximation of the robust value function, and
+                                                                      region-based methods have also been proposed to solve the
+design a robust policy improvement step that searches in the
+                                                                      non-robust CMDPs (Achiam et al., 2017; Yang et al., 2019;
+neighborhood of the current policy. This step generalizes the
+                                                                      Kim et al., 2023), which guarantee the reward improvement
+trust region method (Schulman et al., 2015a) to the robust
+                                                                      and constraint satisfaction during the training. Under model
+setting and guarantees robust reward improvement. Unlike
+                                                                      mismatch, the worst-case transition kernel is different as
+the non-robust setting where there is only one transition
+                                                                      the policy updates, and therefore these approaches may not
+kernel which stays the same throughout the training, under
+                                                                      be applied, and the obtained policy may easily violate the
+model uncertainty the worst-case transition kernel changes
+                                                                      constraint when there is a model mismatch.
+with the policy and is different for reward and utility (see
+Section 3.2). One challenge is that the local approximation           Robust RL. Robust RL was firstly introduced in (Iyengar,
+implicitly depends on the policy to be optimized, which is            2005; Nilim & El Ghaoui, 2004) where the goal is to opti-
+in the neighborhood of the current policy, through its worst-         mize the worst-case performance over the uncertainty set
+case transition kernel, making the optimization intractable.          of transition kernels. Algorithms with convergence guar-
+We develop a novel approximation using the current policy             antee have been proposed for both the model-based robust
+as a surrogate, and prove that such an approximation still            RL with known uncertainty set (Iyengar, 2005; Nilim &
+provides guaranteed robust reward improvement (and later              El Ghaoui, 2004; Xu & Mannor, 2010; Lim & Autef, 2019;
+in step (ii) robust constraint satisfaction).                         Wang et al., 2023a;b) and the model-free robust RL with
+                                                                      unknown uncertainty set (Roy et al., 2017; Zhou et al., 2021;
+The obtained policy guarantees the reward improvement,
+                                                                      Panaganti & Kalathil, 2021; Yang et al., 2021; Wang & Zou,
+but may violate the constraint due to bad initialization and
+                                                                      2022; Wang et al., 2023c; Wang & Zou, 2021; Wang et al.,
+stochastic noise. This leads to a potential problem of the
+                                                                      2022). Compared with the unconstrained robust RL, the
+constrained policy optimization (CPO) approach in (Achiam
+                                                                      robust constrained RL is more challenging since we also
+et al., 2017) that there may not exist any feasible solution
+                                                                      need to guarantee the constraint is satisfied for any transition
+during the updates (as pointed out in (Yang et al., 2019)).
+                                                                      kernel in the uncertainty set. Directly applying algorithms
+To address this challenge, in step (ii) we further project
+                                                                      designed for unconstrained robust RL to robust constrained
+the obtained policy so that it satisfies the constraint for any
+                                                                      RL will lead to constraint-violating policies.
+transition kernel in the uncertainty set.
+                                                                      Constrained RL under Model Uncertainty. Unlike the
+One of the key challenges in the analysis lies in that the
+                                                                      non-robust CMDPs, there are rather limited works on con-
+worst-case transition kernel changes when the policy up-
+                                                                      strained RL under model uncertainty. In (Russel et al.,
+dates. We address this challenge by leveraging our robust
+                                                                      2020), a heuristic approach is proposed. The basic idea is
+performance difference lemma and a novel integration of the
+                                                                      that they first estimate the robust value function, and then
+Lipchitz property of robust value function and the change
+                                                                      update the policy using the non-robust policy gradient (Sut-
+of measure technique.
+                                                                      ton et al., 1999). Since the worst-case transition kernel is
+                                                                      also a function of the policy, the non-robust policy gradient
+2. Related Work                                                       may not update the policy along the direction of the real
+                                                                      gradient. Therefore, it cannot guarantee the performance
+Constrained RL. The CMDPs (Altman, 1999) have been
+                                                                      improvement for each update, and thus the convergence of
+an active field of research. The primal-dual method is one
+                                                                      this heuristic approach may not hold. In (Mankowitz et al.,
+
+                                                                  2
+                                    Constrained Reinforcement Learning Under Model Mismatch
+                                                                                               "∞                                          #
+2020), the robust value function estimate is first performed                                    X
+and a non-robust continuous control algorithm is applied                   Qπc,p (s, a) ≜ Ep          γ t c(st , at )|s0 = s, a0 = a, π .
+                                                                                                t=0
+to update the policy. Similar to (Russel et al., 2020), the
+non-robust policy improvement cannot guarantee the con-                        π
+                                                                         Let Vr,p               π
+                                                                                  (ρ) = Es∼ρ [Vr,p            π
+                                                                                                   (s)] and Vc,p               π
+                                                                                                                 (ρ) = Es∼ρ [Vc,p (s)]
+vergence of the algorithm. In (Wang et al., 2022), a robust              be the discounted accumulative reward function and the
+primal-dual algorithm (RPD) is proposed where the primal                 discounted accumulative utility function, respectively, when
+and dual variables are updated alternatively, and the robust             the initial state s follows distribution ρ. Let dπp (s) denote
+policy gradient is employed to update the policy. However,               the state occupancy measure when the initial state s follows
+the strong duality may not hold when there is model mis-                 distribution ρ:
+match. Secondly, the constraint may be violated during
+                                                                                                   ∞
+the training, which is attributed to the nature of the primal-                                     X
+                                                                               dπp (s) = (1 − γ)         γ t P(st = s|s0 ∼ ρ, π, p).
+dual approach. In contrast, the update of our algorithm is
+                                                                                                   t=0
+performed in the primal domain, and we provide perfor-
+mance guarantee on the robust reward improvement and                     The goal of the CMDP is to learn a policy π that maximizes
+robust constraint violation for each update. Our RCPO en-                                                      π
+                                                                         the cumulative discounted reward Vr,p   (ρ) subject to the
+sures constraint satisfaction throughout the training, which                                                               π
+                                                                         constraint on the cumulative discounted utility Vc,p (ρ), i.e.,
+is critical for many practical applications.
+                                                                                              π             π
+                                                                                        max Vr,p (ρ) s.t. Vc,p (ρ) ≥ d,
+                                                                                          π
+3. Preliminaries and Problem Formulation
+                                                                         where d is some positive threshold for the constraint.
+3.1. Constrained MDP
+                                                                         3.2. Robust MDP
+A constrained Markov Decision Process (CMDP) (Altman,
+1999) is defined by a tuple (S, A, p, r, c), where S is the state        The robust MDP is defined as (S, A, P, r), where P is the
+space, A is the action space, p = {pas ∈ ∆(S), s ∈ S, a ∈                uncertainty set of transition kernels that measures the model
+A}1 is the transition kernel of the CMDP, r : S × A → [0, 1]             uncertainty. In this paper, we consider the uncertainty set
+is the reward function, and c : S × A → [0, 1] is the utility            with (s, a)-rectangularity (Nilim & El Ghaoui, 2004; Iyen-
+function. A stationary policy π : S → ∆(A) is defined as                 gar, 2005).  Specifically, the uncertainty set is defined as
+the probability distribution of choosing actions in A at the             P =      s,a s , where Ps ⊆ ∆(S) are independent over
+                                                                                      P a            a
+                                                                               N
+current state s. After choosing action a at state s, the system          different state-action pairs. The robust value function is
+transits to the next state s′ based on the transition kernel pas .       defined as
+At the same time, the agent receives a reward r(s, a) and a                                         ∞
+                                                                                                   hX                                 i
+utility c(s, a). For the sake of simplicity in presentation, we                 Vrπ (s) ≜ min Ep             γ t r(st , at )|s0 = s, π .       (1)
+consider the case with one constraint, and the results in this                            p∈P
+                                                                                                      t=0
+paper can be extended to the case with multiple constraints.
+                                                                         Similarly, the robust action value function is defined as
+Starting from an initial state s, the reward value function of
+                                                                                                 ∞
+a policy π is defined as                                                                        hX                                       i
+                                                                          Qπr (s, a) ≜ min Ep           γ t r(st , at )|s0 = s, a0 = a, π .
+                       "∞                            #                                 p∈P
+                         X                                                                        t=0
+           π                   t
+        Vr,p (s) ≜ Ep         γ r(st , at )|s0 = s, π ,                                                                                        (2)
+                           t=0
+                                                                         The transition kernel that achieves the min in (1) and (2) is
+where Ep denotes the expectation with respect to the transi-             referred to as the worst-case transition kernel. Denote by
+tion kernel p and γ is the discount factor. The reward action            Vrπ (ρ) the robust discounted accumulative reward function
+value function is defined as                                             when the initial state s follows the distribution ρ. For robust
+                                                                         RL, the goal is to find an optimal robust policy π ∗ that
+                    "∞                                   #
+                      X
+     π                      t
+   Qr,p (s, a) ≜ Ep       γ r(st , at )|s0 = s, a0 = a, π .              optimizes the worst-case performance over the uncertainty
+                         t=0                                             set of transition kernels, i.e.
+Similarly, the utility value function and the utility action
+                                                                                              π ∗ = arg max Vrπ (ρ).                           (3)
+value function are defined as                                                                            π
+                "∞                             #
+                  X
+    π                   t                                                3.3. Problem Formulation
+  Vc,p (s) ≜ Ep        γ c(st , at )|s0 = s, π
+                     t=0
+                                                                         Define the constrained MDP problem under model mis-
+   1
+       ∆(S) denotes the probability simplex defined on S.                match as a tuple (S, A, P, r, c), where P is an uncertainty
+
+                                                                     3
+                                  Constrained Reinforcement Learning Under Model Mismatch
+
+set of transition kernels as defined in Section 3.2 to charac-         prπ denote the worst-case transition kernel of π for reward
+                                                                                    π                     π
+terize the potential model mismatch (see (Siddique et al.,             such that Vr,p r (ρ) = minp∈P Vr,p (ρ). Let DKL (f0 ∥f1 )
+                                                                                      π
+2019) for an example of uncertainty set construction). To              denote the Kullback-Leibler (KL) divergence between two
+guarantee that the constraint is always satisfied even under           distributions f0 and f1 . The following robust performance
+model mismatch, we define the robust utility value function            difference lemma generalizes the bound for standard non-
+which measures the worst-case accumulated utility over the             robust value functions in (27) (Achiam et al., 2017) to the
+uncertainty set:                                                       robust value functions.
+                           ∞
+                          hX                           i               Lemma 4.1 (Robust performance difference lemma). For
+       Vcπ (s) ≜ min Ep           t
+                                 γ c(st , at )|s0 = s, π .   (4)       any two policies π, π ′ , let
+                 p∈P
+                           t=0                                                          ′
+                                                                                   ϵπr,pr ′ = max |Ea∼π′ [Aπr,pr ′ (s, a)]|.
+                                                                                            π   s               π
+We are interested in policies that for any transition ker-
+nel in the uncertainty set, i.e., under model mismatch, the            We have the following bound:
+accumulative utility is still above a prescribed threshold.               ′
+                                                                       Vrπ (ρ) − Vrπ (ρ) ≥                                         (6)
+Furthermore, among those policies, we would like to find
+                                                                                                          π′
+                                                                                                                                  
+one that achieves a good accumulative reward for any tran-                                             2γϵr,pr ′ 1
+                                                                                                                r
+                                                                         1                π
+sition kernel in the uncertainty set. Formally, we aim to                    Es∼dπpr Ar,pr ′ (s, a) −       π
+                                                                                                                    DKL (π ′ ∥π)(s) .
+                                                                       1−γ         π′
+                                                                                            π           1−γ       2
+find a policy that maximizes the worst-case cumulative dis-                     a∼π ′
+
+counted reward subject to the constraint on the worst-case
+cumulative discounted utility, i.e.,                                   It can be easily verified that the bound in (6) holds with
+                                                                       equality when π = π ′ .
+               max Vrπ (ρ), s.t. Vcπ (ρ) ≥ d.                (5)       A first idea is to optimize the lower bound in (6) over π ′
+                 π
+                                                                       in the neighborhood of π, and to obtain policy π ′ with an
+The problem in (5) is referred to as robust constrained RL.            improved performance. However, it’s difficult to implement
+                                                                       since the lower bound in (6) involves the advantage function
+                                                                       and visitation distribution under prπ′ which implicitly de-
+4. Robust Constrained Policy Optimization                              pends on π ′ . To address this unique challenge to the robust
+                                                                       setting, we propose to approximate Aπr,pr ′ (s, a) and dπpr ′
+In this section, we present our algorithm, the robust con-                                                            π             π
+                                                                       by Aπr,prπ (s, a) and dπprπ respectively in the neighborhood of
+strained policy optimization (RCPO), to solve the problem
+                                                                       π. The motivation of such an approximation is that π ′ is
+in (5), and theoretically prove that the obtained policy has an        in the neighborhood of π, and the robust value function is
+improved robust reward value function and also has guaran-             Lipschitz in the policy (as shown in (Wang et al., 2023a)).
+tees for constraint satisfaction at each iteration. Our RCPO           We then use
+algorithm can be applied to large scale problems with a                                                   ′
+                                                                                                                                  
+                                                                                                     2γϵπr,pr ′ 1
+                                                                                                               r
+continuous state space. We also generalize the performance               1            π
+                                                                            Es∼dπpr Ar,prπ (s, a) −         π
+                                                                                                                   DKL (π ′ ∥π)(s)
+difference lemma in (Achiam et al., 2017) to the robust set-            1−γ       π
+                                                                                  ′
+                                                                                                      1−γ        2
+                                                                                a∼π
+ting, and show the robust value functions of two policies                                                                          (7)
+can be bounded using the divergence between them.
+                                                                        as an approximation of the robust performance difference
+                                                                           ′
+In this section, we first present our algorithm and its theo-          Vrπ (ρ) − Vrπ (ρ) and further design our RCPO algorithm
+retical performance analyses. In Section 5, we will provide            based on this approximation. In Appendix C, we show that
+                                                                                                                ′
+a practical implementation for an efficient computation.               the approximated loss in (7) matches Vrπ (ρ) − Vrπ (ρ) up
+                                                                       to the first order.
+4.1. Algorithm Design
+                                                                       As will be shown below, though (7) may not necessarily
+                                                                                                ′
+In the following, we will develop our RCPO algorithm. The              be a lower bound of Vrπ (ρ) − Vrπ (ρ) due to the use of the
+basic idea is to first find a policy to maximize the robust            approximation, we are still able to guarantee both the reward
+reward advantage function in a neighborhood of the current             improvement and the constraint violation. This actually
+policy, which generalizes the trust region policy optimiza-            corresponds to the additional challenge than the non-robust
+tion (Schulman et al., 2015a) to the robust constrained RL             standard CMDP, where there is only one transition kernel
+problem, and then to project the obtained policy to meet the           for both policies. Here, we are interested in the robust
+robust constraint.                                                     value function, which is essentially the value function under
+                                                                       the worst-case transition kernel, and two different policies
+To obtain a local approximation of the robust value function,
+                                                                       induce two different worst-case transition kernels.
+we first present the robust performance difference lemma.
+Specifically, we need a bound for the performance difference           Let prk denote the worst-case transition kernel of πk for
+of the robust value functions between two policies. Let                reward and pck denote the worst-case transition kernel of πk
+
+                                                                   4
+                                              Constrained Reinforcement Learning Under Model Mismatch
+
+for utility. A direct generalization of the CPO algorithm in                     case with a continuous state space, where the transition
+(Achiam et al., 2017) is to optimize the policy iteratively                      kernel can be parameterized using the Gaussian mixture
+using the following update:                                                      model:
+                                h             i                                                              m
+                                                                                                             X
+     πk+1 = arg max Es∼dπrk Aπr,p   k
+                                      r (s, a)                                                 pξs,a (s′ ) =   ϕi N(µi , σi2 ),      (12)
+                                     p              k
+                    π                    k
+                                 a∼π                                                                                    i=1
+                              1         h             i                                                          Pm
+              πk
+       s.t. Vc,p c (ρ) +         Es∼dπck Aπc,p
+                                            k
+                                              c (s, a) ≥ d,                      where ϕi : S → [0, 1] and i=1 ϕi = 1, N denotes the
+                 k           1−γ     p
+                                      k
+                                              k
+                                                                                 Gaussian distribution and µ = (µ1 , · · · , µm ) : S × A →
+                                              a∼π
+          Es∼dπrk [DKL (π∥πk )(s)] ≤ δ.                                (8)       Rm , σ = (σ1 , · · · , σm ) : S × A → Rm are the parameters.
+                p
+                    k                                                            In this case, let ξ = (µ, σ).
+Here, the first constraint in (8) guarantees the new policy                      We then evaluate the advantage function Aπr,pk
+                                                                                                                                r and the vis-
+                                                                                                                                k
+satisfies the robust constraint, and the second constraint                                              πk
+                                                                                 itation distribution dpr by performing policy πk under the
+in (8) limits the search to be in the neighborhood of πk .                                               k
+                                                                                 transition kernel prk . The intermediate policy πk+ 12 is up-
+However, this has an issue that there may be no feasible                         dated by solving the following optimization problem:
+solution to (8) if the current policy πk violates the constraint.
+                                                                                            max      Es∼dπrk [Aπr,p
+                                                                                                                 k
+                                                                                                                    r (s, a)],
+To address the above challenge, we design a two-step ap-                                    π∈Πθ                p
+                                                                                                                    k
+                                                                                                                              k
+                                                                                                       a∼π
+proach which performs policy improvement followed by a
+                                                                                                 s.t. Es∼dπrk [DKL (π||πk )(s)] ≤ δ.         (13)
+projection step (Yang et al., 2019). Below, we introduce our                                                    p
+                                                                                                                    k
+RCPO algorithm in details, and the pseudocode is provided
+                                                                                 Note that in (13), Aπr,p k        πk
+                                                                                                            r and dpr are estimated using the
+in Algorithm 1. To handle large-scale MDPs, we consider a                                                   k       k
+                                                                                 sample trajectories from the current policy πk under the
+parameterized policy class Πθ with parameter θ.                                                         r
+                                                                                 transition kernel pk , which can be easily obtained. We
+Step 1: Robust Policy Improvement. At the robust policy                          optimize the advantage function over a neighborhood of
+improvement step, we first estimate the worst-case transition                    the current policy πk . Therefore, the advantage function
+kernel prk for the current policy πk . This can be done by a                     and visitation distribution under policy πk are good local
+gradient-based method (Wang et al., 2023a). We iteratively                       approximations for all policies in this neighborhood. For
+update pr,t
+         k using the projected gradient descent as follows,
+                                                                                 the tabular case, in the policy improvement step, we only
+                                                                                 need to find a policy π that maximizes the expected value
+          pr,t+1 = ProjP pr,t             πk
+                                                                                 of Aπr,p
+                                                 
+                            k − βt ∇p Vr,pr,t (ρ) ,        (9)                            r (s, a) with a ∼ π, which is linear in π, and satisfies
+                                                                                       k
+            k                                                                             k
+                                                         k
+                                                                                 the constraint on the expected DKL (π||πk )(s) under the
+where βt is the step size and ProjP is the projection operator                   distribution dπprk , which is convex in π. Therefore, (13) is a
+onto set P: ProjP (pas ) = arg minq∈Pas D(pas , q), where D
+                                                                                                   k
+                                                                                 convex optimization problem and can be solved efficiently.
+is some distance measure between two distributions.
+                                                                                 Step 2: Projection. By solving (13), we obtain a policy
+Consider the tabular case for an example, an accurate prk                        πk+ 12 that maximizes the advantage function in the neigh-
+can be obtained such that                                                        borhood of current policy πk . However, πk+ 12 does not
+                          πk               πk                                    necessarily satisfy the constraint. In the projection step,
+                        Vr,p r (ρ) = min Vr,p (ρ),                    (10)       we project the policy πk+ 12 to the constraint set to obtain
+                            k                p∈P
+                                                                                 a constraint-satisfying policy πk+1 . We first estimate the
+as shown in Theorem 4.4 in (Wang et al., 2023a). For                             worst-case transition kernel pck for the utility value function
+the large/continuous state space, to estimate the worst-case                     under the current policy πk using the projected gradient
+transition kernel, we parameterize the transition kernel and                     descent method:
+perform gradient descent to learn the worst-case transition
+                                                                                           pc,t+1 = ProjP pc,t              πk
+                                                                                                                                     
+kernel estimate. Consider the case with a large discrete state                               k               k − βt ∇p Vc,pc,t (ρ) .        (14)
+                                                                                                                                  k
+space as an example, the transition kernel can be parameter-
+                                                                                 For the tabular case, pck can be obtained such that
+ized as follows:
+                                                                                                      πk               πk
+                                                    ⊤     ′                                         Vc,p c (ρ) = min Vc,p (ρ).               (15)
+                                p0s,a (s′ ) · exp( η λϕ(s   )
+                                                              )                                         k                 p∈P
+           pξs,a (s′ ) = P                            s,a
+                                                                  ,   (11)
+                                     0           η ⊤ ϕ(x)                        For the large/continuous state space, we parameterize the
+                                  x ps,a (x) exp( λs,a )
+                                                                                 transition kernel as introduced in Step 1.
+where p0 is the nominal transition kernel of the uncertainty                     We then estimate Aπc,pk      πk
+                                                                                                         c , dpc using sample trajectories from
+set P, ϕ : S → Rm is a m-dimensional feature vector,                              c                      k     k
+                                                                                 pk . The projection step is achieved by solving
+ξ = (η, λ), λ = {λs,a > 0, ∀(s, a) ∈ S × A} and η ∈ Rm
+are parameters. We then present another example for the                                   min      Es∼dπrk [DKL (π||πk+ 12 )(s)]
+                                                                                          π∈Πθ          p
+                                                                                                            k
+
+
+
+                                                                             5
+                                       Constrained Reinforcement Learning Under Model Mismatch
+
+Algorithm 1 Robust Constrained Policy Optimization                         straint in (5), we have:
+  Input: step size δ, {βt }t≥0 , iteration time K, T , initial             Worst-case reward improvement:
+  policy π0                                                                                                                 πk+1
+                                                                                                                   2γϵr,pr 
+                                                                                                                                    r
+  for k = 0, 1, · · · , K − 1 do                                                                        1                               δ
+                                                                           Vrπk+1 (ρ) − Vrπk (ρ) ≥ −       M 2Lπ +       k+1
+                                                                                                                                           ;
+    Initialize pr,0
+                 k , pk
+                         c,0                                                                           1−γ          1−γ                  2
+    for t = 0, 1, · · · , T − 1 do                                         Constraint violation:
+       pr,t+1  ← ProjP pr,t                 πk
+                                                      
+                                k − βt ∇p Vr,pr,t (ρ)
+                                                                                                                       πk+1
+                                                                                                               2γϵc,pc 
+        k
+                                                                                                                               r
+                                              k                                                     1                             δ
+       pc,t+1  ← ProjP pc,t                 πk                             Vcπk+1 (ρ) ≥ d − ϵ −        M 3Lπ +       k+1
+                                                                                                                                     ,
+                                                      
+        k                       k − βt ∇p Vc,pc,t (ρ)                                              1−γ          1−γ                2
+                                              k
+    end for                                                                where M = supp,p′ ∈P ∥dπp k /dπp′k ∥∞ is finite whenever
+             r,T              c,T
+    prk ← pk , pck ← pk                                                                          √
+                                                                                                   |A|
+    Compute Aπr,p   k        πk    πk    πk
+                      r , Ac,pc , dpr , dpc                                supp(ρ) = S and Lπ = (1−γ)2 .
+                      k         k   k     k
+    Update πk+ 12 according to (13)
+    Update πk+1 according to (16)                                          Theorem 4.3 shows that we could adjust δ towards improved
+  end for                                                                  robust reward value function and smaller constraint viola-
+  Output: πK                                                               tion. Moreover, for the large/continuous state space, our
+                                                                           RCPO only incurs an additional degradation ϵ on constraint
+                                                                           violation due to the worst-case transition kernel mismatch.
+                 πk                  πk                                    For the tabular case, ϵ can be arbitrarily close to zero. On
+          s.t. Vc,pc (ρ) + E
+                            s∼d ck [Ac,pc (s, a)] ≥ d.         (16)
+                               π
+                   k               p         k
+                                 a∼π
+                                    k                                      the other hand, throughout the training, the policy πk may
+                          πk                       πk
+                                                                           violate the constraint due to the random initialization or
+In (16), the constraint Vc,pc (ρ) + E
+                                     s∼dpck ,a∼π [Ac,pck (s, a)]
+                                        π
+                                                                           estimation errors. Therefore, in the following, we also char-
+                            k
+                                                 k
+is a local approximation for Vcπ (ρ). For the tabular case,                acterize the performance of our algorithm when the current
+problem in (16) is a convex optimization since the advantage               policy πk violates the constraint.
+function and the visitation distribution are obtained from the             Let b = d − Vcπk (ρ). The following theorem provides a
+current policy πk , and therefore, can be solved efficiently.              lower bound on the worst-case reward improvement and an
+Unlike solving (8), which might be infeasible when the                     upper bound on the worst-case constraint violation.
+current policy πk doesn’t satisfy the constraint, our update               Theorem 4.4. Under Assumption 4.2, when the current
+rule consists of two convex optimization problems (13) and                 policy πk violates the constraint in (16), we have:
+(16), the feasible set of which are much larger than (8).                  Worst-case reward improvement:
+                                                                             Vrπk+1 (ρ) − Vrπk (ρ)
+4.2. Theoretical Results                                                                                πk+1
+                                                                                                    2γϵr,p
+                                                                                                                  r
+                                                                                      1                   r    δ + b2 α
+                                                                                                           k+1           KL
+We first make the following assumption on the worst-case                     ≥−           M 2Lπ +                            ; (18)
+                                                                                  1−γ                1−γ              2
+transition kernel.
+                                                                           Constraint violation:
+Assumption 4.2. We are able to find transition kernels                                                                  πk+1
+pr,ξ  c,ξ                                                                                                           2γϵc,p
+ k , pk such that                                                                                     1                   c   
+                                                                                πk+1                                       k+1
+                                                                              Vc      (ρ) ≥ d − ϵ −       M 3Lπ +
+                                                                                                    1−γ               1−γ
+                 V πkr,ξ (ρ) − Vr,p
+                                 πk
+                                    r (ρ) ≤ ϵ,                                   s
+                   r,pk                 k                                                              p  α
+                                                                                     δ + b2 αKL + bM ′      KL
+
+                 V πkc,ξ (ρ) − Vc,p
+                                 πk
+                                    c (ρ) ≤ ϵ.                 (17)            ×                            2
+                                                                                                                ,               (19)
+                   c,pk                 k                                                        2
+                                                                                            1
+                                                                           where αKL = 2h⊤ H  −1 h , h and H are defined in (20) and
+This assumption can be satisfied under the tabular case using                     ′
+                                                                           (21), M < ∞ is some constant.
+a direct parameterization of the transition kernel or under
+the case with a continuous state space if a large enough                   Theorem 4.4 characterizes the performance of our algorithm
+neural network is used to parameterize the transition kernel.              when the current policy πk is infeasible. A small b, i.e.,
+In the following theorem, we provide a lower bound on                      the current policy πk only violates the constraint slightly,
+the worst-case reward improvement and an upper bound on                    leads to a better robust reward improvement and a smaller
+the worst-case constraint violation for each iteration of our              constraint violation. If the current policy πk satisfies the
+RCPO algorithm in Algorithm 1.                                             constraint, i.e., b = 0, Theorem 4.4 reduces to Theorem 4.3.
+                       π                                                   The misspecified worst-case transition kernel only incurs
+                   k+1
+Theorem 4.3. Let ϵr,p r = maxs |Ea∼πk+1 Aπr,p
+                                           k
+                                              r              (s, a)|
+     πk+1
+                           k+1                         k+1                 an additional performance degradation ϵ on the constraint
+and ϵc,p c  =    maxs |Ea∼πk+1 Aπc,p
+                                  k
+                                     c   (s, a)|.
+                                                Under As-                  violation for large/continuous state space. For the tabular
+         k+1                         k+1
+sumption 4.2, when the current policy πk satisfies the con-                case, ϵ can be arbitrarily close to zero.
+
+                                                                       6
+                                        Constrained Reinforcement Learning Under Model Mismatch
+
+5. Practical Implementation                                                         s.t. h⊤ (θ − θ k ) + b ≤ 0.                     (25)
+In this section, we provide a practical implementation of
+Algorithm 1 to tackle the computational challenge.                      The problems in (23) and (25) can be solved by convex
+                                                                        programming (Yang et al., 2019). We have the following
+To update the policy efficiently, for a small step size δ,              update rule for each policy update.
+we approximate the objective functions and constraints in
+the optimization problems (13) and (16) using their Taylor
+                                                                                         s
+                                                                                                 2δ
+expansions. Let                                                          θ k+1 = θ k +                    H −1 g
+                                                                                             g ⊤ H −1 g
+            g = ∇θ Es∼dπrk ,a∼π [Aπr,p
+                                    k
+                                       r (s, a)],
+                                                                                           q
+                          p
+                              k,ξ
+                                               k,ξ                                                2δ
+                                                                                               g ⊤ H −1 g
+                                                                                                          hH −1 g + b      
+            h = ∇θ Es∼dπck                 πk                                  − max                                    , 0 H −1 h. (26)
+                          p
+                                    ,a∼π [Ac,pck,ξ (s, a)]   (20)                                  h⊤ H −1 h
+                              k,ξ
+
+
+be the gradient of the reward advantage function and the
+                                                                        In this way, our RCPO algorithm can be implemented effi-
+gradient of the utility advantage function, respectively. Let
+                                                                        ciently for large-scale problems.
+           H = ∇2θ Es∼dπrk DKL (π||πk )(s)
+                                               
+                                                         (21)
+                              p
+                                  k,ξ
+                                                                        6. Experiments
+be the Hessian matrix of the KL divergence. We then de-
+velop the following practical implementation for our RCPO.              To validate the proposed algorithm, we compare it with
+                                                                        several baseline algorithms (PCPO (Yang et al., 2019),
+Step 1: Robust Policy Improvement. We first estimate the                RVI (Iyengar, 2005), CPO (Achiam et al., 2017), R3C
+worst-case transition kernel prk for the current policy πk . We         (Mankowitz et al., 2020) and CUP (Yang et al., 2022)) in
+iteratively update the parameterized transition kernel pr,t  k,ξ        the setting of tabular and deep cases, while using different
+using the following projected gradient descent method:                  environments such as the gambler problem (Sutton & Barto,
+                                                                        2018; Zhou et al., 2021; Shi & Chi, 2022), the N -chain prob-
+          pr,t+1 = ProjP pr,t              πk
+                                                    
+           k,ξ              k,ξ − βt ∇p Vr,pr,t (ρ) .       (22)
+                                                                        lem (Wang et al., 2022), the Frozen-Lake problem (Brock-
+                                                     k,ξ
+
+                                                                        man et al., 2016) and the Point Gather in Mujoco (Achiam
+We then use the first-order approximation for the objective             et al., 2017; Yang et al., 2019).
+function and the second-order approximation for the KL
+divergence constraint at the current policy πk in (13). Let             6.1. Tabular Case
+θ k denote the parameter of policy πk . The parameter of
+the intermediate policy πk+ 12 is updated by solving the                In the setting of tabular cases, we evaluate the performance
+following practical formulation for (13):                               of our algorithm in the environment of gambler problem,
+                                                                        N-chain problem and Frozen-Lake problem, where both
+                           1                                            state and action spaces are finite. We compare our algo-
+   max g ⊤ (θ − θ k ), s.t. (θ − θ k )⊤ H(θ − θ k ) ≤ δ.
+    θ                      2                                            rithm with four baselines: PCPO (Yang et al., 2019), R3C
+                                                       (23)             (Mankowitz et al., 2020), CUP (Yang et al., 2022) and the
+                                                                        model-based robust value iteration (RVI) (Iyengar, 2005).
+The objective function of (23) is linear in θ and the con-
+                                                                        The PCPO and CUP learn an optimal policy subjecting to
+straint is quadratic in θ. Therefore, problem (23) can be
+                                                                        the constraints under the nominal transition kernels without
+easily solved.
+                                                                        considering the model mismatch. The R3C performs robust
+Step 2: Projection. For the projection step, we first estimate          value function estimate and non-robust policy improvement
+the worst-case transition kernel pck for utility. Similarly, we         for robust constrained RL. The model-based RVI directly
+iteratively update the parameterized transition kernel pc,t  k,ξ        optimizes the unconstrained robust reward objective, which
+using the following projected gradient descent method:                  serves as an upper bound of the reward value function for the
+                                                                        robust constrained problem. We consider the KL divergence
+          pc,t+1 = ProjP pc,t              πk
+                                                    
+           k,ξ             k,ξ − βt ∇p Vc,pc,t (ρ) .       (24)         uncertainty set. For each problem, we run the algorithms
+                                                     k,ξ
+                                                                        for 5 independent times and plot the mean of the reward
+We then approximate the objective function in (16) by its               and utility along with their standard deviation as a func-
+second order expansion and approximate the constraint in                tion of the number of iterations. The detailed environments
+(16) by its first order expansion. The parameter of the policy          descriptions can be found in Appendix F.
+πk+1 is then updated by solving the following problem:                  For the gambler problem, the threshold for the constraint is
+               1                                                        2.5. It can be seen from Fig. 1(b) that our RCPO always
+            min (θ − θk+ 12 )⊤ H(θ − θk+ 12 )                           satisfies the constraint during the training while PCPO, RVI,
+             θ 2
+
+                                                                    7
+                                 Constrained Reinforcement Learning Under Model Mismatch
+
+R3C and CUP violate the constraints. Moreover, the reward             the same neural network with two hidden layers of size (64,
+of our RCPO in Fig. 1(a) is close to the reward of RVI,               32) in all four algorithms. We adopt a Mujoco-based envi-
+which is the best achievable reward for the unconstrained             ronment, Point Gather task with safety constraints (Achiam
+robust RL. Therefore, our algorithm learns a policy that              et al., 2017), which is a well-recognized constrained MDP
+satisfies the worst-case constraint on the utility and achieves       environment. We use the following hyper-parameters for
+optimal reward objective.                                             training RCPO: discounted factor = 0.995, learning step
+                                                                      size = 0.001, batch size = 50, 000, and utility-constrained
+                                                                      threshold = 0.1. To provide fair comparisons, we use the
+                                                                      same hyper-parameters for training baseline algorithms. The
+                                                                      experiments are implemented in rllab (Duan et al., 2016),
+                                                                      a tool for developing and evaluating RL algorithms. To
+                                                                      introduce model uncertainties into the environment, we use
+                                                                      Gaussian noise to perturb the environment and evaluate the
+                                                                      performance of three algorithms under the perturbed envi-
+                  Figure 1: Gambler Problem                           ronment. We don’t report the utility of CUP as it violates
+                                                                      the constraint badly. It can be seen from Fig. 4(b) that the re-
+For the N -chain problem, the threshold is set to be 6. From
+                                                                      wards of RCPO are much higher than these three non-robust
+Fig. 2(b), it can be seen that all five algorithms satisfy the
+                                                                      algorithms under model uncertainty, which demonstrates the
+constraint, indicating that the constraint is easy to satisfy
+                                                                      robustness of our algorithm to model uncertainty when incor-
+for this problem. However, in Fig. 2(a), the two non-robust
+                                                                      porating deep neural networks. Meanwhile, the well-trained
+algorithms PCPO and CUP doesn’t converge to the reward
+                                                                      RCPO policy satisfies the utility constraint. In summary,
+of the unconstrained RVI.
+                                                                      RCPO is able to provide efficient, robust, and constraint-
+                                                                      satisfied policies in environments with continuous spaces
+                                                                      by incorporating deep neural networks.
+
+
+
+
+                  Figure 2: N -chain Problem
+
+For the Frozen-Lake problem, the threshold is set to be
+0.7. From Fig. 3(b), it can be seen that only RCPO satis-                                  Figure 4: Point Gather
+fies the constraint. Moreover, in Fig. 3(a), it can be seen
+that our RCPO obtain more reward than the two non-robust
+                                                                      7. Conclusion
+algorithms PCPO and CUP, which demonstrates the effec-                In this paper, we study the problem of constrained rein-
+tiveness and robustness of our algorithm.                             forcement learning under model mismatch. The goal is to
+                                                                      maximize the worst-case reward over the uncertainty set sub-
+                                                                      ject to a constraint that the utility function for all transition
+                                                                      kernels in the uncertainty set shall be above a prescribed
+                                                                      threshold. We propose a robust constrained policy opti-
+                                                                      mization (RCPO) algorithm, which consists of several novel
+                                                                      technical developments than the CPO algorithm (Achiam
+                                                                      et al., 2017) for the non-robust standard CMDP problem.
+                                                                      One result that may of independent interest is a robust per-
+                                                                      formance difference lemma that bound the different between
+                Figure 3: Frozen-Lake Problem
+                                                                      the robust value functions of two policies. Our algorithm
+                                                                      is applicable to large scale MDPs, and has theoretical guar-
+6.2. Deep Case
+                                                                      antees on worst-case reward improvement and constraint
+In the setting of the deep case, we incorporate our algorithm         violation at each iteration during the training. We further
+into deep neural networks for tackling high-dimensional               provide an efficient approximation for the purpose of prac-
+spaces (e.g. continuous state spaces). We compare the                 tical implementation of our algorithm. Numerical experi-
+proposed RCPO with CPO (Achiam et al., 2017), PCPO                    ments on demonstrate the effectiveness and robustness of
+(Yang et al., 2019) and CUP (Yang et al., 2022). We use               our algorithm under model mismatch.
+
+                                                                  8
+                                Constrained Reinforcement Learning Under Model Mismatch
+
+Impact Statement                                                    Csiszár, I. and Körner, J. Information theory: coding theo-
+                                                                      rems for discrete memoryless systems. Cambridge Uni-
+This paper presents work whose goal is to advance the field           versity Press, 2011.
+of Reinforcement Learning. There are many potential soci-
+etal consequences of our work, none which we feel must be           Dalal, G., Dvijotham, K., Vecerik, M., Hester, T., Paduraru,
+specifically highlighted here.                                        C., and Tassa, Y. Safe exploration in continuous action
+                                                                      spaces. arXiv preprint arXiv:1801.08757, 2018.
+Acknowledgments
+                                                                    Ding, D., Zhang, K., Basar, T., and Jovanovic, M. Natu-
+The work of Zhongchang Sun and Shaofeng Zou is sup-                   ral policy gradient primal-dual method for constrained
+ported by the National Science Foundation under Grants                Markov decision processes. In Proc. Advances in Neural
+CCF-2007783, CCF-2106560 and ECCS-2337375 (CA-                        Information Processing Systems (NeurIPS), volume 33,
+REER). The work of Sihong He and Fei Miao is sup-                     pp. 8378–8390, 2020.
+ported by the National Science Foundation under Grant
+CNS-2047354 (CAREER).                                               Ding, D., Wei, X., Yang, Z., Wang, Z., and Jovanovic, M.
+                                                                      Provably efficient safe exploration via primal-dual policy
+This material is based upon work supported under the AI Re-           optimization. In Proc. International Conference on Artifi-
+search Institutes program by National Science Foundation              cal Intelligence and Statistics (AISTATS), pp. 3304–3312.
+and the Institute of Education Sciences, U.S. Department              PMLR, 2021.
+of Education through Award # 2229873 - National AI Insti-
+tute for Exceptional Education. Any opinions, findings and          Duan, Y., Chen, X., Houthooft, R., Schulman, J., and
+conclusions or recommendations expressed in this material            Abbeel, P. Benchmarking deep reinforcement learning
+are those of the author(s) and do not necessarily reflect the         for continuous control. In International conference on
+views of the National Science Foundation, the Institute of            machine learning, pp. 1329–1338. PMLR, 2016.
+Education Sciences, or the U.S. Department of Education.
+                                                                    Efroni, Y., Mannor, S., and Pirotta, M. Exploration-
+                                                                      exploitation in constrained MDPs. arXiv preprint
+References                                                            arXiv:2003.02189, 2020.
+Achiam, J., Held, D., Tamar, A., and Abbeel, P. Constrained
+                                                                    Fisac, J. F., Akametalu, A. K., Zeilinger, M. N., Kaynama,
+  policy optimization. In Proc. International Conference
+                                                                      S., Gillula, J., and Tomlin, C. J. A general safety frame-
+  on Machine Learning (ICML), pp. 22–31. PMLR, 2017.
+                                                                      work for learning-based control in uncertain robotic sys-
+                                                                      tems. IEEE Transactions on Automatic Control, 64(7):
+Altman, E. Constrained Markov decision processes:
+                                                                      2737–2752, 2018.
+  stochastic modeling. Routledge, 1999.
+                                                                    Gasparik, A., Gamble, C., and Gao, J. Safety-first AI for
+Auer, P., Jaksch, T., and Ortner, R. Near-optimal regret              autonomous data centre cooling and industrial control.
+  bounds for reinforcement learning. In Proc. Advances                DeepMind blog, 2018.
+  in Neural Information Processing Systems (NIPS), vol-
+  ume 21, 2008.                                                     He, S., Han, S., and Miao, F. Robust electric vehicle bal-
+                                                                      ancing of autonomous mobility-on-demand system: A
+Brockman, G., Cheung, V., Pettersson, L., Schneider, J.,              multi-agent reinforcement learning approach. In 2023
+  Schulman, J., Tang, J., and Zaremba, W. OpenAI Gym.                 IEEE/RSJ International Conference on Intelligent Robots
+  arXiv preprint arXiv:1606.01540, 2016.                              and Systems (IROS), pp. 5471–5478. IEEE, 2023a.
+
+                                                                    He, S., Wang, Y., Han, S., Zou, S., and Miao, F. A robust and
+Bura, A., HasanzadeZonuzy, A., Kalathil, D., Shakkottai,
+                                                                      constrained multi-agent reinforcement learning electric
+  S., and Chamberland, J.-F. Dope: Doubly optimistic and
+                                                                      vehicle rebalancing method in amod systems. In 2023
+  pessimistic exploration for safe reinforcement learning.
+                                                                      IEEE/RSJ International Conference on Intelligent Robots
+  Advances in Neural Information Processing Systems, 35:
+                                                                      and Systems (IROS), pp. 5637–5644. IEEE, 2023b.
+ 1047–1059, 2022.
+                                                                    Iyengar, G. N. Robust dynamic programming. Mathematics
+Chow, Y., Nachum, O., Duenez-Guzman, E., and                          of Operations Research, 30(2):257–280, 2005.
+  Ghavamzadeh, M. A lyapunov-based approach to safe
+  reinforcement learning. In Proc. Advances in Neural               Kakade, S. and Langford, J. Approximately optimal approx-
+  Information Processing Systems (NeurIPS), volume 31,                imate reinforcement learning. In ICML, volume 2, pp.
+  2018.                                                               267–274, 2002.
+
+                                                                9
+                                Constrained Reinforcement Learning Under Model Mismatch
+
+Kim, D., Lee, K., and Oh, S. Trust region-based safe distri-         Panaganti, K. and Kalathil, D. Sample complexity of robust
+  butional reinforcement learning for multiple constraints.            reinforcement learning with a generative model. arXiv
+  In Thirty-seventh Conference on Neural Information Pro-              preprint arXiv:2112.01506, 2021.
+  cessing Systems, 2023.
+                                                                     Paternain, S., Chamon, L., Calvo-Fullana, M., and Ribeiro,
+Kiran, B. R., Sobh, I., Talpaert, V., Mannion, P., Al Sal-             A. Constrained reinforcement learning has zero duality
+  lab, A. A., Yogamani, S., and Pérez, P. Deep reinforce-              gap. In Proc. Advances in Neural Information Processing
+  ment learning for autonomous driving: A survey. arXiv                Systems (NeurIPS), volume 32, 2019.
+  preprint arXiv:2002.00444, 2020.
+                                                                     Roy, A., Xu, H., and Pokutta, S. Reinforcement learning
+Levine, S., Finn, C., Darrell, T., and Abbeel, P. End-to-              under model mismatch. In Proc. Advances in Neural
+  end training of deep visuomotor policies. The Journal of             Information Processing Systems (NIPS), pp. 3046–3055,
+  Machine Learning Research, 17(1):1334–1373, 2016.                    2017.
+
+                                                                     Russel, R. H., Benosman, M., and Van Baar, J. Ro-
+Li, T., Guan, Z., Zou, S., Xu, T., Liang, Y., and Lan,
+                                                                       bust constrained-MDPs: Soft-constrained robust policy
+  G. Faster algorithm and sharper analysis for con-
+                                                                       optimization under model uncertainty. arXiv preprint
+  strained Markov decision process. arXiv preprint
+                                                                       arXiv:2010.04870, 2020.
+  arXiv:2110.10351, 2021.
+                                                                     Schulman, J., Levine, S., Abbeel, P., Jordan, M., and Moritz,
+Li, Y., Lan, G., and Zhao, T. First-order policy optimiza-             P. Trust region policy optimization. In Proc. Inter-
+  tion for robust markov decision process. arXiv preprint              national Conference on Machine Learning (ICML), pp.
+  arXiv:2209.10579, 2022.                                              1889–1897. PMLR, 2015a.
+Liang, Q., Que, F., and Modiano, E. Accelerated primal-              Schulman, J., Moritz, P., Levine, S., Jordan, M., and Abbeel,
+  dual policy optimization for safe reinforcement learning.            P. High-dimensional continuous control using generalized
+  arXiv preprint arXiv:1802.06480, 2018.                               advantage estimation. arXiv preprint arXiv:1506.02438,
+                                                                       2015b.
+Lim, S. H. and Autef, A. Kernel-based reinforcement learn-
+  ing in robust Markov decision processes. In Proc. Inter-           Shi, L. and Chi, Y. Distributionally robust model-based
+  national Conference on Machine Learning (ICML), pp.                  offline reinforcement learning with near-optimal sample
+  3973–3981. PMLR, 2019.                                               complexity. arXiv preprint arXiv:2208.05767, 2022.
+
+Liu, T., Zhou, R., Kalathil, D., Kumar, P., and Tian, C. Fast        Siddique, T., Hau, J. L., Atallah, S., and Petrik, M. Ro-
+  global convergence of policy optimization for constrained            bust pest management using reinforcement learning. The
+  MDPs. arXiv preprint arXiv:2111.00552, 2021.                         Multi-disciplinary Conference on Reinforcement Learn-
+                                                                       ing and Decision Making, 2019.
+Liu, Y., Ding, J., and Liu, X. Ipo: Interior-point policy
+  optimization under constraints. In Proc. Conference on             Stooke, A., Achiam, J., and Abbeel, P. Responsive safety
+  Artificial Intelligence (AAAI), volume 34, pp. 4940–4947,            in reinforcement learning by pid lagrangian methods. In
+  2020.                                                                Proc. International Conference on Machine Learning
+                                                                       (ICML), pp. 9133–9143. PMLR, 2020.
+Mankowitz, D. J., Calian, D. A., Jeong, R., Paduraru, C.,
+ Heess, N., Dathathri, S., Riedmiller, M., and Mann, T.              Sutton, R. S. and Barto, A. G. Reinforcement learning: An
+ Robust constrained reinforcement learning for continu-                introduction. MIT press, 2018.
+ ous control with model misspecification. arXiv preprint             Sutton, R. S., McAllester, D. A., Singh, S. P., Mansour, Y.,
+ arXiv:2010.10644, 2020.                                               et al. Policy gradient methods for reinforcement learning
+                                                                       with function approximation. In Proc. Advances in Neural
+Nilim, A. and El Ghaoui, L. Robustness in Markov decision
+                                                                       Information Processing Systems (NIPS), volume 99, pp.
+  problems with uncertain transition matrices. In Proc. Ad-
+                                                                       1057–1063. Citeseer, 1999.
+  vances in Neural Information Processing Systems (NIPS),
+  pp. 839–846, 2004.                                                 Tessler, C., Mankowitz, D. J., and Mannor, S. Re-
+                                                                       ward constrained policy optimization. arXiv preprint
+Ono, M., Pavone, M., Kuwata, Y., and Balaram, J. Chance-               arXiv:1805.11074, 2018.
+  constrained dynamic programming with application to
+  risk-aware robotic space exploration. Autonomous Robots,           Wang, Q., Ho, C. P., and Petrik, M. Policy gradient in robust
+  39(4):555–571, 2015.                                                mdps with global convergence guarantee, 2023a.
+
+                                                                10
+                                  Constrained Reinforcement Learning Under Model Mismatch
+
+Wang, Y. and Zou, S. Online robust reinforcement learning                Yu, C., Liu, J., and Nemati, S. Reinforcement learning in
+ with model uncertainty. In Proc. Advances in Neural                       healthcare: A survey. arXiv preprint arXiv:1908.08796,
+ Information Processing Systems (NeurIPS), volume 34,                      2019a.
+ pp. 7193–7206, 2021.
+                                                                         Yu, M., Yang, Z., Kolar, M., and Wang, Z. Convergent
+Wang, Y. and Zou, S. Policy gradient method for robust re-                 policy optimization for safe reinforcement learning. In
+ inforcement learning. In Proc. International Conference                   Proc. Advances in Neural Information Processing Sys-
+ on Machine Learning (ICML), volume 162, pp. 23484–                        tems (NeurIPS), volume 32, 2019b.
+ 23526. PMLR, 2022.
+                                                                         Zhang, Y., Vuong, Q., and Ross, K. First order constrained
+Wang, Y., Miao, F., and Zou, S. Robust constrained rein-                   optimization in policy space. Advances in Neural Infor-
+ forcement learning. arXiv preprint arXiv:2209.06866,                      mation Processing Systems, 33:15338–15349, 2020.
+ 2022.
+                                                                         Zheng, L. and Ratliff, L. Constrained upper confidence
+Wang, Y., Velasquez, A., Atia, G., Prater-Bennette, A., and                reinforcement learning. In Learning for Dynamics and
+ Zou, S. Robust average-reward markov decision pro-                        Control, pp. 620–629. PMLR, 2020.
+ cesses. In Proc. Conference on Artificial Intelligence                  Zhou, Z., Bai, Q., Zhou, Z., Qiu, L., Blanchet, J., and
+ (AAAI), 2023b.                                                            Glynn, P. Finite-sample regret bound for distributionally
+Wang, Y., Velasquez, A., Atia, G. K., Prater-Bennette, A.,                 robust offline tabular reinforcement learning. In Proc.
+ and Zou, S. Model-free robust average-reward reinforce-                   International Conference on Artifical Intelligence and
+ ment learning. In International Conference on Machine                     Statistics (AISTATS), pp. 3331–3339. PMLR, 2021.
+ Learning, pp. 36431–36469. PMLR, 2023c.
+
+Wei, H., Liu, X., and Ying, L. Triple-q: A model-free
+ algorithm for constrained reinforcement learning with
+ sublinear regret and zero constraint violation. In Interna-
+ tional Conference on Artificial Intelligence and Statistics,
+ pp. 3274–3307. PMLR, 2022.
+
+Xu, H. and Mannor, S. Distributionally robust Markov deci-
+  sion processes. In Proc. Advances in Neural Information
+  Processing Systems (NIPS), pp. 2505–2513, 2010.
+
+Xu, T., Liang, Y., and Lan, G. Crpo: A new approach for
+  safe reinforcement learning with convergence guarantee.
+  In Proc. International Conference on Machine Learning
+ (ICML), pp. 11480–11491. PMLR, 2021.
+
+Yang, L., Ji, J., Dai, J., Zhang, L., Zhou, B., Li, P., Yang, Y.,
+  and Pan, G. Constrained update projection approach to
+  safe policy optimization. Advances in Neural Information
+  Processing Systems, 35:9111–9124, 2022.
+
+Yang, T.-Y., Rosca, J., Narasimhan, K., and Ramadge, P. J.
+  Projection-based constrained policy optimization. In
+  International Conference on Learning Representations,
+  2019.
+
+Yang, W., Zhang, L., and Zhang, Z. Towards theoreti-
+  cal understandings of robust Markov decision processes:
+  Sample complexity and asymptotics. arXiv preprint
+  arXiv:2105.03863, 2021.
+
+Ying, D., Ding, Y., and Lavaei, J. A dual approach to
+  constrained Markov decision processes with entropy reg-
+  ularization. arXiv preprint arXiv:2110.08923, 2021.
+
+                                                                    11
+                                 Constrained Reinforcement Learning Under Model Mismatch
+
+A. Review of Constrained Policy Optimization
+In this section, we provide an overview of the CPO method developed in (Achiam et al., 2017). Recall that in the standard
+(non-robust) RL setting, the value function difference between two policies π, π ′ can be written as (Kakade & Langford,
+2002):
+                                           π′         π            1
+                                         Vr,p (ρ) − Vr,p (ρ) =        E π′ [Aπ (s, a)],                                    (27)
+                                                                 1 − γ s∼dp′ r,p
+                                                                        a∼π
+
+where Aπr,p (s, a) = Qπr,p (s, a) − Vr,p
+                                      π
+                                         (s) is the reward advantage function. In (Achiam et al., 2017), the above result was
+further extended to the following one:
+                                    ′
+                                   π          π
+                                 Vr,p (ρ) − Vr,p (ρ)                                                                       (28)
+                                                   "                 ′ r
+                                                                                          #
+                                        1            π         2γϵπr     1
+                                 ≥         Es∼dπ Ar,p (s, a) −             DKL (π ′ ∥π)(s) ,
+                                     1 − γ a∼πp′               1−γ 2
+         ′
+where ϵπr = maxs |Ea∼π′ [Aπr,p (s, a)]|.
+Equation (28) connects the performance difference between two policies to an average divergence between them. Compared
+                                                                              ′
+with (27), the expectation is taken with respect to dπp in (28) instead of dπp . When π ′ is close to π, DKL (π ′ ∥π)(s) is
+              ′
+small and dπp is close to dπp . Therefore, the right hand side of (28) is a good local approximation for the performance
+             π′     π
+difference Vr,p − Vr,p . The trust region method for unconstrained RL was proposed (Schulman et al., 2015a;b) based on this
+approximation and provides monotonic improvement for the reward value function.
+For the utility value function, we have the following equivalent expression:
+                                    ′
+                                   π          π
+                                 Vc,p (ρ) − Vc,p (ρ)                                                                       (29)
+                                                   "                 ′ r
+                                                                                          #
+                                        1            π         2γϵπc     1
+                                 ≥         Es∼dπ Ac,p (s, a) −             DKL (π ′ ∥π)(s) ,
+                                     1 − γ a∼πp′               1−γ 2
+         ′
+where ϵπc = maxs |Ea∼π′ [Aπc,p (s, a)]| and Aπc,p (s, a) = Qπc,p (s, a) − Vc,p
+                                                                             π
+                                                                                (s) is the utility advantage function. The right
+                                                            ′
+                                                          π           π
+hand side of (29) can be used as an approximation for Vc,p (ρ) − Vc,p (ρ). By applying the trust region methods to CMDPs,
+the constrained policy optimization (CPO) was proposed in (Achiam et al., 2017), where the policy is updated by solving
+the following optimization problem.
+                                                                 h            i
+                                     πk+1 = arg max Es∼dπp k Aπr,p    k
+                                                                        (s, a)
+                                                       π     a∼π
+                                                  πk         1           h           i
+                                           s.t. Vc,p (ρ) +      Es∼dπp k Aπc,p
+                                                                            k
+                                                                               (s, a) ≥ d,
+                                                           1 − γ a∼π
+                                               Es∼dπp k [DKL (π∥πk )(s)] ≤ δ.                                              (30)
+When the current policy πk satisfies the constraint, this update rule leads to a policy that has performance improvement and
+approximate satisfaction of constraints (Achiam et al., 2017). Note that the expectation in the optimization problem (30) is
+taken with respect to dπp k . The optimization problem (30) depends on π only through the distribution of the current action a,
+which can thus be optimized efficiently.
+
+B. Proof of Lemma 4.1
+For any policies π, π ′ , we have that
+                         ′                     ′
+                     Vrπ (ρ) − Vrπ (ρ) = Vr,p
+                                           π            π
+                                              r (ρ) − Vr,pr (ρ)
+                                               ′          π
+                                                   π
+                                             π′           π
+                                         ≥ Vr,p r (ρ) − Vr,pr (ρ)
+                                                π′          π′
+                                                                               π′
+                                                                         2γϵr,pr ′
+                                                                                     r
+                                            1            h                               1                i
+                                         ≥     Es∼dπpr Aπr,pr ′ (s, a) −       π
+                                                                                           DKL (π ′ ∥π)(s) ,               (31)
+                                           1−γ       π
+                                                     ′
+                                                       ′    π             1 − γ          2
+                                                       a∼π
+
+                                                                 12
+                                    Constrained Reinforcement Learning Under Model Mismatch
+
+                                        π                   π
+where the first inequality is because Vr,p r (ρ) = minp∈P Vr,p (ρ) and the second inequality follows from Theorem 1 in
+                                           π
+(Achiam et al., 2017).
+
+C. First-Order Approximation of (7)
+We show that the approximated loss in (7) matches the original one up to first order. For the first-order approximation, we
+have that
+                                              ′
+                                    Vrπ (ρ) − Vrπ (ρ) = ⟨π ′ − π, ∇π Vrπ (ρ)⟩ + O(∥π ′ − π∥21 ).                                        (32)
+The policy gradient of the robust MDPs with the (s, a)-entry has the following form (Li et al., 2022):
+                                                                           1
+                                                    ∇π Vrπ (ρ)(s, a) =        dπr (s)Qπr,prπ (s, a).                                    (33)
+                                                                         1 − γ pπ
+We further have that
+                ′
+               Vrπ (ρ) − Vrπ (ρ) = ⟨π ′ − π, ∇π Vrπ (ρ)⟩ + O(∥π ′ − π∥21 )
+                                           1 X ′                       
+                                    =                 π (a|s) − π(a|s) dπprπ (s)Qπr,prπ (s, a) + O(∥π ′ − π∥21 )
+                                        1 − γ s,a
+                                    (a)     1 X ′
+                                                                                                        r (s)) + O(∥π − π∥1 )
+                                                                                                                       ′
+                                                      π (a|s) − π(a|s) dπprπ (s)(Qπr,prπ (s, a) − Vr,pπ                       2
+                                                                         
+                                     =
+                                         1 − γ s,a                                                      π
+
+
+
+                                    (b)    1 X ′
+                                                                                           r (s)) + O(∥π − π∥1 )
+                                                                                                          ′
+                                    =               π (a|s)dπprπ (s)(Qπr,prπ (s, a) − Vr,p
+                                                                                        π                        2
+                                        1 − γ s,a                                          π
+
+
+                                           1            h            i
+                                    =          Es∼dπpr Aπr,prπ (s, a) + O(∥π ′ − π∥21 ),                                                 (34)
+                                        1−γ           π
+                                                 a∼π ′
+
+which matches with the first term in (7), where equality (a) is due to the fact that s,a π ′ (a|s) − π(a|s) dπprπ (s)Vr,p
+                                                                                               P                                 π
+                                                                                                                                     r (s) =
+                                                                                                                                     π
+                                 ′
+P π              π
+                          P                                                                            P             π         π
+    s d p r (s)Vr,pr (s)
+          π     Pπ π a π       π   (a|s)  −  π(a|s)   =   0 and equality  (b)  is due to the  fact that    s,a π(a|s)dp r (s)(Qr,pr (s, a) −
+                                                                                                                        π         π
+   π                                           π
+Vr,p  r (s)) =
+      π             s dprπ (s)(Vr,prπ (s) − Vr,prπ (s)) = 0. Therefore, the approximated loss in (7) matches the original one up to
+first order.
+
+D. Proof of Theorem 4.3
+We first prove the follow Lemma.
+Lemma D.1. If the current policy πk satisfies the constraint and the constraint set is closed and convex under the policy
+parameterization, then under the KL divergence projection, we have that
+                                                        Es∼dπk [DKL (πk+1 ||πk )(s)] ≤ δ.                                               (35)
+                                                                 r,ξ
+                                                             p
+                                                                 k
+
+
+
+Proof. Note that the constraint in (16) is linear in π. Therefore, the constraint set is closed and convex. Since πk lies in
+the constraint set and πk+1 is the projection of πk+ 12 onto the constraint set, from the Bregmann divergence projection
+inequality, we have that
+            Es∼dπk [DKL (πk ||πk+ 12 )(s)] ≥ Es∼dπk [DKL (πk ||πk+1 )(s)] + Es∼dπk [DKL (πk+1 ||πk+ 12 )(s)].                           (36)
+                        r,ξ                                       r,ξ                                  r,ξ
+                    p                                            p                                 p
+                        k                                         k                                    k
+
+Since the KL divergence is non-negative, we have that
+                                 Es∼dπk [DKL (πk ||πk+ 12 )(s)] ≥ Es∼dπk [DKL (πk ||πk+1 )(s)].                                         (37)
+                                              r,ξ                                         r,ξ
+                                          p                                           p
+                                              k                                           k
+
+When δ is small, the KL divergence is asymptotically symmetric. Therefore, we have that
+                               Es∼dπk [DKL (πk+1 ∥πk )(s)] ≤ Es∼dπk [DKL (πk+ 12 ∥πk )(s)] ≤ δ.                                         (38)
+                                         r,ξ                                        r,ξ
+                                     p                                          p
+                                         k                                          k
+
+
+
+
+                                                                          13
+                                  Constrained Reinforcement Learning Under Model Mismatch
+
+With Lemma D.1, we are ready to prove Theorem 4.3.
+
+Proof. From Lemma 4.1, we have that for the reward improvement,
+                                                                                             πk+1
+                                                                            2γϵr,pr
+                                                                                                     r
+                                              1            h                                             1                   i
+               Vrπk+1 (ρ) − Vrπk (ρ) ≥           Es∼dπrk Aπr,p
+                                                             k
+                                                               r   (s, a) −       k+1
+                                                                                                           DKL (πk+1 ∥πk )(s) .   (39)
+                                             1−γ     p
+                                                       k+1
+                                                               k+1           1−γ                         2
+                                                         a∼πk+1
+
+Note that Aπr,p
+             k
+                r   (s, a) = Qπr,p
+                                k
+                                   r
+                                                  πk
+                                       (s, a) − Vr,p r   (s) is Lipschitz in πk (Wang et al., 2023a). We have that there exists Lπ
+                k+1                k+1               k+1
+such that
+                                  |Aπr,p
+                                      k
+                                         r    (s, a) − Ak+1
+                                                        r,pr (s, a)| ≤ Lπ ∥πk+1 (s) − πk (s)∥1 .                                  (40)
+                                        k+1                   k+1
+
+
+We then have that
+                                                           πk+1
+                                           2γϵr,pr
+                                                                      r
+             1            h                                                 1                    i
+                Es∼dπrk Aπr,p
+                            k
+                              r   (s, a) −       k+1
+                                                                              DKL (πk+1 ∥πk )(s)
+            1−γ     p
+                      k+1
+                              k+1           1 −  γ                          2
+                     a∼πk+1
+                                                                                         πk+1 r
+                 1               h
+                                    πk+1
+                                                                                      2γϵr,p r
+                                                                                                    1                       i
+                                                                                             k+1
+           ≥         Es∼d rk Ar,pr (s, a) − Lπ ∥πk+1 (s) − πk (s)∥1 −
+                           π                                                                          DKL (πk+1 ∥πk )(s)
+              1−γ          p
+                             k+1
+                                         k+1                                           1−γ          2
+                        a∼πk+1
+                                                                          πk+1 r
+                 1               h                                   2γϵr,p  r
+                                                                                     1                       i
+                                                                             k+1
+           =         Es∼dπrk       − Lπ ∥πk+1 (s) − πk (s)∥1 −                         DKL (πk+1 ∥πk )(s) ,                      (41)
+              1−γ          p
+                             k+1                                       1−γ           2
+                                                         πk+1                            πk+1                π         
+where the equality is due to the fact that Ea∼πk+1 Ar,p       r    (s, a) = Ea∼πk+1 Qr,p         r   (s, a) − Vr,pk+1
+                                                                                                                   r   (s) = 0. Since
+                                                              k+1                                k+1               k+1
+                                                    p
+∥πk+1 (s) − πk (s)∥1 = 2DT V (πk+1 ∥πk )(s) ≤ 2DKL (πk+1 ∥πk )(s) (Csiszár & Körner, 2011), we have that
+                                                                               πk+1 r
+                      1                h                                    2γϵr,p r
+                                                                                          1                       i
+                                                                                   k+1
+                          Es∼dπrk          − Lπ ∥πk+1 (s) − πk (s)∥1 −                      DKL (πk+1 ∥πk )(s)
+                    1−γ          p
+                                   k+1                                        1−γ         2
+                                                            πk+1
+                                                         2γϵr,pr  1
+                                                                      r
+                          1                  h
+                                                                k+1
+                                                                                                   i
+                    ≥           Es∼dπrk        − 2Lπ +                      DKL (πk+1 ∥πk )(s)
+                        1−γ          p
+                                       k+1                1−γ             2
+                                                                πk+1
+                                                           2γϵ
+                                                                          r
+                    (a)    1                 h                  r,prk+1     1                        i
+                    ≥           Es∼dπk − M 2Lπ +                               DKL (πk+1 ∥πk )(s)
+                         1−γ           p
+                                         r,ξ
+                                         k
+                                                             1−γ             2
+                                                   πk+1
+                                                2γϵr,pr  δ
+                                                           r
+                    (b)       1                       k+1
+                    ≥−            M 2Lπ +                       ,                                                                (42)
+                          1−γ                     1−γ         2
+where (a) is due to the fact that M = supp,p′ ∈P ∥dπp k /dπp′k ∥∞ is finite and (b) is from Lemma D.1 and Jensen’s inequality.
+To characterize the constraint violation, we first have that
+                                              V πkc,ξ (ρ) + Es∼dπk [Aπk c,ξ (s, a)] ≥ d.                                          (43)
+                                                  c,pk                      p
+                                                                             c,ξ    c,pk
+                                                                             k
+                                                                      a∼πk+1
+
+and
+                                              π        πk
+               Vcπk+1 (ρ) − Vcπk (ρ) = Vc,pk+1
+                                            c  (ρ) − Vc,pc (ρ)
+                                                         π
+                                                  k+1                   k
+                                              π          πk
+                                       ≥ Vc,pk+1
+                                              c  (ρ) − Vc,pc                 (ρ)
+                                                  k+1                  k+1
+                                                                                             πk+1
+                                                                        2γϵc,pc
+                                                                                                     r
+                                          1            h                                                 1                   i
+                                       ≥     Es∼dπck Aπc,p
+                                                         k
+                                                           c   (s, a) −       k+1
+                                                                                                           DKL (πk+1 ∥πk )(s) .   (44)
+                                         1−γ     p
+                                                   k+1
+                                                           k+1           1−γ                             2
+                                                         a∼πk+1
+
+
+Following the proof of (42), we have that
+      Vcπk+1 (ρ) ≥ d − (V πkc,ξ (ρ) − Vcπk (ρ)) − Es∼dπk [Aπk c,ξ (s, a)]
+                           c,pk                                   p
+                                                                      c,ξ    c,pk
+                                                                      k
+                                                            a∼πk+1
+
+
+                                                                             14
+                                      Constrained Reinforcement Learning Under Model Mismatch
+                                                      πk+1 r
+                      1             h             2γϵc,pc
+                                                              1                   i
+                                      πk                k+1
+                  +       Es∼d ck Ac,pc (s, a) −
+                              π                                 DKL (πk+1 ∥πk )(s)
+                    1−γ       p
+                                k+1
+                                         k+1        1−γ       2
+                            a∼πk+1
+                                   πk+1                                
+                ≥ d − ϵ − Es∼dπk Ac,pc (s, a) + Lπ ∥πk+1 (s) − πk (s)∥1
+                                        c,ξ      k
+                                       p
+                                        k
+                                a∼πk+1
+                                                                                             πk+1
+                                                                             2γϵc,pc
+                                                                                                    r
+                     1            h
+                                    πk+1                                           k+1                  1                    i
+                  +     Es∼dπck Ac,p  c   (s, a) − Lπ ∥πk+1 (s) − πk (s)∥1 −                              DKL (πk+1 ∥πk )(s)
+                    1−γ     p
+                              k+1
+                                      k+1                                     1−γ                       2
+                                 a∼πk+1
+
+                = d − ϵ − Es∼dπk [Lπ ∥πk+1 (s) − πk (s)∥1 ]
+                                           c,ξ
+                                       p
+                                           k
+                                                                   πk+1 r
+                   1            h                               2γϵc,pc
+                                                                           1                   i
+                                                                      k+1
+                  +   Es∼dπck     − Lπ ∥πk+1 (s) − πk (s)∥1 −                DKL (πk+1 ∥πk )(s)
+                  1−γ     p
+                            k+1                                  1−γ       2
+                                                          πk+1
+                                                     2γϵc,pc  1
+                                                                 r
+                        1               h
+                                                            k+1
+                                                                                       i
+                ≥d−ϵ+       Es∼dπk − M 3Lπ +                         DKL (πk+1 ∥πk )(s)
+                      1−γ         p
+                                    c,ξ
+                                    k
+                                                       1−γ         2
+                                             πk+1
+                                          2γϵc,pc  δ
+                                                    r
+                        1                       k+1
+                ≥d−ϵ−       M 3Lπ +                     .                                                                        (45)
+                      1−γ                  1−γ        2
+This completes the proof.
+
+E. Proof of Theorem 4.4
+We first provide an upper bound on the KL divergence between πk and πk+1 in the following lemma. We then follow the
+proof of Theorem 4.3 to prove Theorem 4.4.
+Lemma E.1. If the current policy πk violates the constraint and the constraint set is convex and closed under the policy
+parameterization, let b = Vcπ (ρ) − d, then under the KL divergence projection, we have that
+                                                                                   r
+                                                                     2           ′   αKL
+                               Es∼dπk [DKL (πk+1 ||πk )(s)] ≤ δ + b αKL + bM              ,                         (46)
+                                    p
+                                      r,ξ
+                                      k
+                                                                                       2
+                 1
+where αKL = 2h⊤ H  −1 h , h is the gradient of the utility advantage function, H is the Hessian matrix of the KL divergence
+             ′
+constraint, M ≤ ∞ is some constant.
+
+Proof. Define the following set:
+
+                                Zπk = π V πkc,ξ (ρ) + Es∼dπk ,a∼π [Aπk c,ξ (s, a)] ≥ V πkc,ξ (ρ) .
+                                     
+                                                                                                                                 (47)
+                                                 c,pk        p
+                                                                 c,ξ    c,pk                c,pk
+                                                                 k
+
+
+                                                                 l
+Note that the current policy πk lies in Zπk . Define the policy πk+1 as the projection of πk+ 21 onto Zπk . We have that
+
+                                                                                         ⊤  π l (s)
+                                l
+     DKL (πk+1 ∥πk )(s) = DKL (πk+1                        l
+                                    ∥πk )(s) + DKL (πk+1 ∥πk+1                    l
+                                                               )(s) + πk+1 (s) − πk+1 (s) log k+1 .                              (48)
+                                                                                              πk (s)
+                                     l                                                   l
+From D.1, we have that Es∼dπk [DKL (πk+1 ∥πk )(s)] ≤ δ. For small b, Es∼dπk [DKL (πk+1 ∥πk+1 )(s)] can be approxi-
+                                      r,ξ                                             r,ξ
+                                  p                                               p
+                                      k                                               k
+mated by the second order expansion. We have that
+                                                           1
+                                       l
+                   Es∼dπk [DKL (πk+1 ∥πk+1 )(s)] ≈           (θ k+1 − θ lk+1 )⊤ H(θ k+1 − θ lk+1 )
+                         p
+                          r,ξ
+                          k
+                                                           2
+                                                           1       b            ⊤          b    
+                                                         =       ⊤    −1
+                                                                          H −1 h H ⊤ −1 H −1 h
+                                                           2 h H h                      h H h
+                                                                 b2
+                                                         =
+                                                           2h⊤ H −1 h
+                                                         = b2 αKL ,                                                              (49)
+
+                                                                   15
+                                  Constrained Reinforcement Learning Under Model Mismatch
+                                                                                                                 ⊤          l
+                1                                                                              l                            πk+1 (s)
+where αKL = 2h⊤ H −1 h and the first equality is from the update rule in (26). For πk+1 (s) − πk+1 (s)                log    πk (s) , we
+have that
+                                         ⊤      π l (s)                                       π l (s)
+                                  l
+                    πk+1 (s) − πk+1   (s) log k+1                           l
+                                                            ≤ ∥πk+1 (s) − πk+1   (s)∥1 log k+1             .                (50)
+                                                   πk (s)                                       πk (s) ∞
+                                                                                      π l (s)
+                                                                               h                    i
+Since Es∼dπk [DKL (πk+1l
+                           ∥πk )(s)] ≤ δ, there exists M ′ such that Es∼dπk       log πk+1
+                                                                                         k (s)    ∞
+                                                                                                      ≤ M ′ . Moreover, we have
+              r,ξ                                                          r,ξ
+            p                                                             p
+              k               q                                            k
+                  l                               l
+that ∥πk+1 (s) − πk+1 (s)∥1 ≤ 2DKL (πk+1 ∥πk+1         )(s). We then have that
+
+                                                  h                         ⊤      π l (s) i
+                                        Es∼dπk                       l
+                                                       πk+1 (s) − πk+1   (s) log k+1
+                                             p
+                                               r,ξ
+                                               k
+                                                                                     πk (s)
+                                                               r
+                                                         h        1                      i
+                                         ≤ Es∼dπk M ′                           l
+                                                                    DKL (πk+1 ∥πk+1  )(s)
+                                                   p
+                                                     r,ξ          2
+                                                 sk
+                                         (a)                     h1                        i
+                                         ≤ M ′ Es∼dπk                             l
+                                                                    DKL (πk+1 ∥πk+1   )(s)
+                                                              r,ξ 2
+                                                            p
+                                                              k
+                                                  r
+                                         (b)           αKL
+                                         ≈ bM ′               ,                                                                    (51)
+                                                          2
+
+where (a) is from Jensen’s inequality and (b) is from (49).
+By combining (48), (49) and (51), we have that
+                                                                                             r
+                                                                           2             ′       αKL
+                                 E    πk
+                                   s∼d r,ξ   [DKL (πk+1 ||πk )(s)] ≤ δ + b αKL + bM                  .                             (52)
+                                      p
+                                        k
+                                                                                                  2
+
+
+
+With Lemma E.1, Theorem 4.4 can be proved similarly as Theorem 4.3.
+
+F. Experiments
+The detailed environments descriptions are in the following:
+Gambler Problem in a game in which a gambler bets on a sequence of coin tosses, wining the stake when the outcome is
+head and losing when it’s tail. Starting from an initial balance, the game ends once the gambler’s balance reaches 16 or 0.
+For different state-action pairs, the gambler receives different utilities. The reward is 10 when the balance reaches 16 and 0
+otherwise. The probability of head for each coin toss is p = 0.6. The radius of the uncertainty set is 0.1.
+N -chain problem involves a chain with N nodes. At each node, the agent can choose to move to its left or its right. Upon
+moving to its left, it receives a reward-utility signal of (1, 0), while moving to its right yields a reward-utility signal of (0, 2).
+When reaching the N -th node, the agent receives a bonus reward of 10. With probability 0.1, the agent may slip to the
+different direction of its action. We let N = 40 and the radius of the uncertainty set be 0.15.
+Frozen-Lake problem is about training an agent to cross a 4 × 4 frozen lake from the starting point to the end point without
+falling into any holes. Upon falling into the holes, the agent will get trapped and receive zero reward and utility. Reaching
+the end point yields a reward of r = 200, otherwise r = 0. At some states, the agent will receive a utility of c = 1. The
+agent may slip to the different direction of its action. The radius of the uncertainty set is 0.1.
+Point Gather is a benchmark Mujoco task for constrained MDP, in which an agent is rewarded for gathering green apples
+but is constrained to collect a limited number of red fruit (Achiam et al., 2017).
+
+
+
+
+                                                                 16
+

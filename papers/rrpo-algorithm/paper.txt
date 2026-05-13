@@ -1,0 +1,2590 @@
+                                         Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+                                         Rectified Robust Policy Optimization for Model-Uncertain
+                                         Constrained Reinforcement Learning without Strong Duality
+
+                                         Shaocong Ma                                                                                 scma0908@umd.edu
+                                         Department of Computer Science
+                                         University of Maryland, College Park
+
+                                         Ziyi Chen                                                                                       zc286@umd.edu
+                                         Department of Computer Science
+                                         University of Maryland, College Park
+arXiv:2508.17448v2 [cs.LG] 19 Sep 2025
+
+
+
+
+                                         Yi Zhou                                                                                      yi.zhou@tamu.edu
+                                         Department of Computer Science and Engineering
+                                         Texas A&M University
+
+                                         Heng Huang                                                                                       heng@umd.edu
+                                         Department of Computer Science
+                                         University of Maryland, College Park
+
+                                         Reviewed on OpenReview: https: // openreview. net/ forum? id= 7l63xwAgAW
+
+
+
+                                                                                          Abstract
+
+                                                 The goal of robust constrained reinforcement learning (RL) is to optimize an agent’s per-
+                                                 formance under the worst-case model uncertainty while satisfying safety or resource con-
+                                                 straints. In this paper, we demonstrate that strong duality does not generally hold in robust
+                                                 constrained RL, indicating that traditional primal-dual methods may fail to find optimal
+                                                 feasible policies. To overcome this limitation, we propose a novel primal-only algorithm
+                                                 called Rectified Robust Policy Optimization (RRPO), which operates directly on the primal
+                                                 problem without relying on dual formulations. We provide theoretical convergence guaran-
+                                                 tees under mild regularity assumptions, showing convergence to an approximately optimal
+                                                 feasible policy with iteration complexity matching the best-known lower bound when the
+                                                 uncertainty set diameter is controlled in a specific level. Empirical results in a grid-world
+                                                 environment validate the effectiveness of our approach, demonstrating that RRPO achieves
+                                                 robust and safe performance under model uncertainties while the non-robust method can
+                                                 violate the worst-case safety constraints.
+
+
+                                         1   Introduction
+
+                                         In many practical reinforcement learning (RL) applications, it is critical for an agent to not only maximize
+                                         expected cumulative rewards but also satisfy certain constraints, such as safety requirements (Yao et al.,
+                                         2024; Gu et al., 2024b) or resource limitations (Wang et al., 2023c). However, real-world environments often
+                                         diverge from the training environment due to model mismatch (Roy et al., 2017; Viano et al., 2021; Zhai et al.,
+                                         2024; Wang et al., 2024) and environment uncertainty (Lütjens et al., 2019; Wang & Zou, 2021; Ma et al.,
+                                         2023). Such discrepancies can lead to significant performance degradation and, more severely, violations
+                                         of constraints, which is unacceptable in safety-critical applications. For instance, an autonomous robot
+                                         may encounter unforeseen transitions due to equipment aging or mechanical failures: In the environment
+                                         navigation and the robust control tasks, the robot make take the action that perform better in the ideal
+                                         simulated environment due to the ideal equipment condition but suffer high penalty from higher energy cost
+                                         or unexpected operations in the worst-case scenario.
+
+
+                                                                                               1
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Despite its practical importance, robust constrained RL has been relatively underexplored in the literature.
+Two closely related areas are robust RL (Bagnell et al., 2001; Nilim & Ghaoui, 2005; Iyengar, 2005) and
+constrained RL (Altman, 1999; Wachi & Sui, 2020). Robust RL focuses on optimizing performance under
+model uncertainties but typically does not consider constraints. Constrained RL aims to optimize perfor-
+mance while satisfying certain constraints but often assumes a fixed environment without uncertainties.
+Seamlessly combining two fields presents inherent challenges.
+To address these challenges, we propose a framework for robust constrained RL under model uncertainty.
+Specifically, we consider Markov Decision Processes (MDPs) where the transition dynamics are not fixed
+but lie within an uncertainty set, which is commonly known as the robust MDPs (Mannor et al., 2016; Ho
+et al., 2018; Tamar et al., 2013; Grand-Clément & Kroer, 2021). Our objective is to optimize the worst-
+case cumulative reward over this uncertainty set while ensuring that all constraints are also simultaneously
+satisfied in the worst-case scenario. This robust approach ensures that the agent’s policy remains effective
+and safe even when the environment deviates from the nominal model.
+A common approach to solving such constrained problems is the primal-dual method (Altman, 1999; Pater-
+nain et al., 2019; Bai et al., 2022; Liang et al., 2018; Chen & Wang, 2016; Mahadevan et al., 2014; Chen et al.,
+2022), which leverages the strong duality property to efficiently find optimal policies. Strong duality allows
+the original constrained problem to be solved by considering its dual problem, simplifying computations and
+enabling convergence guarantees. However, a crucial question arises:
+
+       Q1: Does strong duality hold in robust constrained RL?
+
+In this paper, we address this question head-on. We first demonstrate that, unfortunately, strong duality
+does not generally hold in robust constrained RL. The presence of model uncertainties breaks the
+Fenchel-Moreau condition, the common routine of showing the strong duality in the non-robust constrained
+RL (Altman, 1999). We construct a specific counterexample where the duality gap, the difference between
+the optimal values of the primal and dual problems, is strictly positive. This finding indicates that traditional
+constrained RL algorithm may fail to be directly generalized to the robust constrained setting; we also note
+that the non-zero duality gap does not exclude the potential global convergence of primal-dual algorithm.
+Recognizing this fundamental issue, we are motivated to ask the following question:
+       Q2: Can we develop a non-primal-dual algorithm for solving robust constrained RL problems
+       with provable convergence guarantees?
+
+To address this question, we introduce the Rectified Robust Policy Optimization (RRPO), a primal-only
+algorithm adapted from the CRPO (Xu et al., 2021). RRPO is specifically designed for robust constrained
+RL, which bypasses the issues associated with the duality gap. Our algorithm operates directly on the
+primal problem, ensuring constraint satisfaction and robustness without relying on dual formulations or
+strong duality assumptions. We summarize our key contributions as follows:
+
+1. Counterexample—Non-Zero Duality Gap: In Section 3, we provide a concrete example showing that
+   strong duality does not hold in robust constrained RL. To the best of our knowledge, this negative result
+   is the first theoretical example showing the non-zero duality gap in the existing literature, which resolves
+   an open problem in constrained robust RL. We emphasize that establishing such a counterexample is
+   nontrivial and crucial for understanding the theoretical boundaries of constrained robust RL.
+2. Proposed Primal-Only Algorithm—RRPO: Motivated by the lack of strong duality of constrained
+   robust RL problems, we introduce RRPO, a primal-only algorithm designed to solve robust constrained RL
+   problems without relying on strong duality. Moreover, in Section 4, we rigorously analyze the convergence
+   properties of RRPO. Specifically, we prove that under appropriate conditions, RRPO converges to an
+   approximately optimal feasible policy π ∗ within a specified tolerance δ in the worst-case scenario. When
+   the uncertainty set is sufficiently small, our derived convergence rate and iteration complexity also recover
+   the best-possible lower bound for non-robust constrained RL problems (Vaswani et al., 2022).
+3. Empirical Validation: We validate the effectiveness of RRPO through experiments in a grid-world
+   environment and the classical mountain car environment. Our results show that RRPO achieves robust
+
+
+                                                       2
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+   and safe performance under model uncertainties, outperforming the original CRPO method that may fail
+   to maintain constraint satisfaction in the worst-case scenario.
+
+1.1   Related Work
+
+Robust Constrained RL Here, we mainly explore the existing literature regarding robust constrained RL.
+In Section A.1, we provide other related work. Robust constrained RL considers the problem of optimizing
+performance while satisfying constraints in the worst-case scenario. Although robust RL and constrained
+RL have each been extensively studied, fewer works address their intersection. In Russel & Petrik (2020),
+the authors investigate robust constrained RL and propose a heuristic approach that estimates robust value
+functions and employs a standard policy gradient method (Sutton et al., 1999), substituting the nominal
+value function with the robust one. However, as Wang et al. (2022) points out, this approach overlooks how
+the worst-case transition kernel depends on the policy, resulting in updates that do not correspond to actual
+gradients of the robust value function and thus lack theoretical convergence guarantees. To remedy this,
+Wang et al. (2022) introduces a robust primal-dual algorithm for solving robust constrained RL problems.
+However, this method assumes the strong duality, which we will show later, generally does not hold in robust
+constrained RL. Several other studies also examine the strong duality of robust constrained RL problems:
+Ghosh (2024) points out that the standard routine in proving the strong duality of constrained RL problems
+(Panaganti & Kalathil, 2022) cannot hold in the robust case. Zhang et al. (2024) proves the strong duality
+by considering a different policy space, which is different from the space considered in Paternain et al. (2019).
+We include further discussion on it in Section A.2. Complementing these works, He et al. (2025) tackle the
+online distributionally robust off-dynamics setting, and present the ORBIT algorithm that attains sublinear
+regret with matching upper and lower sample-complexity bounds under general f -divergence uncertainty
+sets.
+The uncertainty set captures the discrepancy between training and deployment environments. In our work,
+we mainly focus on the (s, a)-rectangular uncertainty set (Iyengar, 2005; Nilim & Ghaoui, 2005), where the
+transition uncertainty is modeled independently for each state-action pair. As shown by Lu et al. (2024);
+Kumar et al. (2023); Wang et al. (2023a); Wang & Zou (2021), this structure induced by a specific norm or
+divergence usually enables efficient solution methods through robust value iteration and linear programming,
+preserving the tractability of dynamic programming. While our work is also potential to be extended to
+other settings when a valid robust policy evaluation algorithm presents, including:
+
+s-Uncertainty Sets The s-rectangular uncertainty set (Li et al., 2022; Li & Shapiro, 2023; Kumar et al.,
+2023) relaxes independence by allowing nature to choose transitions jointly across all actions at a given state.
+The widely known results include the robust policy gradient formula (Li et al., 2022) and the closed-form
+solution for p-norm uncertainty sets (Kumar et al., 2023). These results make it possible to solve the robust
+value function more efficiently.
+
+d-Uncertainty Sets More recently, the d-rectangular uncertainty set (Ma et al., 2022) has been proposed
+for linear MDPs to further generalize the existing concepts of (s, a)-rectangular uncertainty sets, where the
+ambiguity is structured in a low-dimensional decision space, enabling scalable robust value iteration in high-
+dimensional settings. Representative works include Blanchet et al. (2023); Liu & Xu (2024a); Liu et al.
+(2024); Liu & Xu (2025). Remarkably, this setting has also been widely explored in the offline RL setting
+(Tang et al., 2024; Liu & Xu, 2024b). These results make it possible to extend our results potentially to be
+able to handle more complicated robust MDPs with the function approximation.
+Additionally, we discuss our connection to other setting in the robust reinforcement learning and constrained
+reinforcement learning.
+
+Robust RL with Reward and State Uncertainty Modern robust RL tackles misspecified or learned
+rewards by optimizing worst-case or risk-aware returns. Early formulations blending nominal and worst-case
+objectives (Xu & Mannor, 2006; Delage & Mannor, 2010) have been extended by coupling-aware uncertainty
+sets that avoid excessive conservatism (Mannor et al., 2012). Recent work uses Bayesian reward ensembles
+and CVaR objectives for preference-based or RLHF settings, giving reliability under noisy learned rewards
+
+
+                                                       3
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+(Brown et al., 2020). Newest advances address uncertainty inside the reward or state signal itself. Seeing-
+is-Not-Believing RSC-MDPs explicitly model spurious correlations in the state and learn policies robust
+to such confounding (Ding et al., 2023). Mirror-Descent inverse RL adds robustness directly to the learned
+reward via adversarial mirror steps with O(1/T ) regret (Han et al., 2022). Distributional Reward Estimation
+builds a reward-uncertainty distribution whose risk-sensitive aggregation stabilises multi-agent training (Hu
+et al., 2022). Moreover, robust MDPs cast dynamics error as a zero-sum game; rectangular ambiguity sets
+admit efficient robust DP with deterministic optimal policies (Iyengar, 2005; Nilim & Ghaoui, 2005). Follow-
+ups loosen rectangularity to retain tractability while reducing pessimism (Wiesemann et al., 2013; Goyal &
+Grand-Clement, 2023). Practical algorithms combine adversarial disturbances or domain randomization with
+policy learning to harden policies against dynamics shifts (Pinto et al., 2017).
+
+RL with Hard Constraints CMDP theory guarantees optimal stationary policies and LP or primal–dual
+solutions (Altman, 1999; Borkar, 2005). Deep RL implementations such as CPO (Achiam et al., 2017) and
+RCPO (Tessler et al., 2019) enforce budget or safety limits during learning. Runtime shielding synthesised
+from temporal-logic specifications now guarantees safety even under partial observability (Carr et al., 2023).
+Quantile-Constrained RL enforces outage-probability bounds by constraining the cost distribution’s tail
+rather than its expectation (Jung et al., 2022). Trust-Region Safe Distributional Actor–Critic simultaneously
+handles multiple constraints with distributional critics and provable convergence (Kim et al., 2023). Model-
+predictive safety filters based on learned control-barrier functions enforce hard state constraints in unknown
+stochastic systems while optimizing performance (Wang et al., 2023b). Together these methods wrap (or
+jointly train) base policies to guarantee constraint satisfaction without relying on soft penalties.
+
+Safe RL Safe exploration confines learning to recoverable states (Moldovan & Abbeel, 2012) or certified
+Lyapunov safe sets (Berkenkamp et al., 2017). Action-level intervention layers correct unsafe commands
+on the fly (Dalal et al., 2018a), while risk-sensitive criteria such as CVaR directly penalize catastrophic
+tails (Chow et al., 2018a). These threads, alongside recent hard-constraint and shielding techniques above,
+provide complementary, constraint-respecting alternatives that our revised Related-Work section now covers.
+
+Robust Constrained Multi-Agent Systems An important extension of robust constrained RL is its
+application to multi-agent settings. The concept of robustness has been generalized to multi-agent reinforce-
+ment learning (MARL) (Zhang et al., 2020; Ma et al., 2023; Jiao & Li, 2024), particularly in addressing state
+uncertainty (He et al., 2023a; Han et al., 2024). Notably, He et al. (2023b) were the first to jointly consider
+robustness and constraints in a real-world scenario, proposing the ROCOMA algorithm, which achieves effi-
+cient EV rebalancing under transition kernel uncertainty. Many topics in constrained robust MARL remains
+unexplored, making it a promising direction with significant potential for further research.
+
+
+2     Preliminaries and Problem Formulation
+
+In this section, we formalize our problem setting in the context of online robust constrained RL, where the
+transition probabilities are unknown. We re-use an existing robust policy evaluation algorithm to estimate
+the approximate value function.
+
+2.1   Robust MDPs
+
+A Robust Markov Decision Process (Robust MDP) is defined by the tuple (S, A, P, r, γ), where S is a finite
+state space, A is a finite action space, P represents the uncertainty set of transition probabilities with ∆(S)
+denoting the probability simplex over S, r : S × A → R is the reward function, γ ∈ [0, 1) is the discount
+factor. We denote µ ∈ ∆(S) as the initial state distribution.
+In an robust MDP, the transition probabilities are not fixed but belong to an uncertainty set; usually, the
+uncertainty set P is defined as the s-rectangular set (Derman et al., 2021; Wang et al., 2023a; Wiesemann
+et al., 2013; Kumar et al., 2023)
+                                                P := ×s∈S Ps ,
+
+
+                                                      4
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+or (s, a)-rectangular set (Wiesemann et al., 2013; Kumar et al., 2023)
+
+                                             P := ×(s,a)∈S×A P(s,a) .
+
+Here, instead of assuming a specific type of uncertainty set as in many existing literature (Wang & Zou,
+2021; Wang et al., 2022), we work on general uncertainty sets but simply assume that the robust value
+function over these uncertainty set is computationally available. Notably, for many well-known uncertainty
+sets, such as the p-norm (Kumar et al., 2023), IPM (Zhou et al., 2024), and R-contamination (Wang & Zou,
+2021) uncertainty set, the robust value function can be efficiently calculated without hurting the sample
+complexity.
+Let the policy π : S → ∆(A) map each state to a probability distribution over actions. In robust RL,
+the robust value function V π (s) under policy π starting from state s is defined as the worst-case expected
+discounted cumulative reward:
+                                                   " ∞                      #
+                                                    X
+                                 V (s) = inf Eπ,P
+                                   π
+                                                        γ r(st , at ) s0 = s ,
+                                                          t
+                                            P ∈P
+                                                         t=0
+
+where the expectation is taken over the trajectories generated by following policy π, with at ∼ π(· | st ) and
+st+1 ∼ P (· | st , at ) for P ∈ P. The objective is to find an optimal policy π ∗ that maximizes the worst-case
+expected cumulative reward from the initial state distribution µ:
+                                                   ∗
+                                              V π (µ) = max V π (µ),
+                                                                 π
+
+where V π (µ) := Es∼µ [V π (s)].
+
+2.2   Robust Constrained MDPs
+
+In many applications, it is essential to optimize the reward while satisfying certain constraints, even under
+model uncertainty. Constrained robust MDPs (Wang et al., 2022; Zhang et al., 2024; Sun et al., 2024; Ghosh,
+2024) extend the robust MDP framework by incorporating multiple constraints.
+Let there be I constraint reward functions ri : S ×A → R for i = 1, 2, . . . , I. The robust expected cumulative
+reward under policy π for constraint i is given by:
+                                                    "∞                          #
+                                                     X
+                                Vi (s) = inf Eπ,P
+                                  π
+                                                       γ ri (st , at ) s0 = s ,
+                                                        t
+                                            P ∈P
+                                                        t=0
+
+and Viπ (µ) = Es∼µ [Viπ (s)] is the robust expected cumulative cost from the initial distribution µ.
+The constrained robust MDP aims to find a policy that maximizes the worst-case reward while ensuring
+that each constraint is satisfied under the worst-case transition dynamics:
+
+                                    max     V0π (µ)                                                           (1)
+                                      π
+                                     s.t.   Viπ (µ) ≥ di ,       for i = 1, 2, . . . , I,
+
+where V0π (µ) denotes the robust expected cumulative reward, and di are the specified thresholds for the
+constraints. That is, a constrained robust MDP is defined by the tuple (S, A, P, {ri }Ii=0 , {di }Ii=1 , γ), where
+{ri }Ii=0 and {di }Ii=1 extend the original robust MDP to include these constraint reward function ri and the
+threshold di .
+
+2.3   Duality Gap of Robust Constrained MDPs
+
+In constrained optimization, the concept of duality plays a pivotal role in formulating and solving problems
+(Boyd & Vandenberghe, 2004; Bertsekas et al., 2003). The duality gap is the difference between the optimal
+values of the primal problem and its dual. When this gap is zero, we say that strong duality holds, allowing the
+
+
+                                                             5
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+primal and dual problems to have the same optimal value. This property is instrumental in many optimization
+algorithms, particularly in convex optimization, where it enables efficient computation of optimal solutions
+via dual methods. For the constrained robust MDP defined earlier, we incorporate the constraints into
+the optimization objective, formulating the Lagrangian of the constrained robust RMDP. The Lagrangian
+combines the objective function and the constraints using Lagrange multipliers λ = (λ1 , λ2 , . . . , λI ) ≥ 0:
+                                                           I
+                                                           X
+                                   L(π, λ) = V0π (µ) −           λi (di − Viπ (µ)) .                         (2)
+                                                           i=1
+
+In this formulation, L(π, λ) is the Lagrangian function, and λi ≥ 0 are the Lagrange multipliers associated
+with the constraints. The primal problem is defined by maximizing over π, after minimizing the Lagrangian
+over λ ≥ 0. That is,
+                                              max min L(π, λ).                                          (3)
+                                                   π   λ≥0
+
+The dual problem is then obtained by minimizing the Lagrangian over λ ≥ 0, after maximizing over π.
+Specifically, the dual problem is:
+                                         min max L(π, λ).                                       (4)
+                                               λ≥0     π
+
+The duality gap D is defined as the difference between the optimal value of the primal problem and the
+optimal value of the dual problem.
+Definition 2.1 (Duality gap of robust constrained MDPs). Let M := (S, A, P, {ri }Ii=0 , {di }Ii=1 , γ) be a
+robust constrained MDP. The duality gap D of M is defined as
+                                                                
+                            D := max min L(π, λ) − min max L(π, λ) ,                                    (5)
+                                         π   λ≥0                   λ≥0   π
+
+where L is the Lagrangian function of M defined by Equation (2).
+
+It has been widely known that, in standard constrained MDPs without robustness considerations, under
+certain regularity conditions, strong duality holds (Altman, 1999). This means that the duality gap D is
+zero, and the optimal value of the primal problem equals that of the dual problem. This property allows us
+to use primal-dual algorithms effectively to find optimal policies that satisfy the constraints. However, in
+the next section, we will show that the constrained robust MDPs may not have such nice property, which
+presents a significant challenge for solving constrained robust RL problems.
+
+3     Constrained Robust RL Has Non-Zero Duality Gap
+
+In this section, we present a counterexample demonstrating that the duality gap in robust constrained MDPs
+(Theorem 2.1) can be strictly positive.
+Theorem 3.1. There exists a constrained robust MDP such that its duality gap is strictly positive.
+
+Here, we describe the construction of this counterexample. Then we will briefly describe the analysis of the
+duality gap. The full proof can be found in Section B.
+
+3.1   Construction of the Counterexample
+
+Consider a simple MDP with two states, s0 and s1 , and two actions, a0 and a1 , as depicted in Figure
+1. The MDP is defined as follows: (i) Transitions: The initial state is s0 . From state s1 , any action
+deterministically transitions back to state s0 . From state s0 , action a0 deterministically remains in s0 . From
+state s0 , action a1 transitions to s0 with probability p and to s1 with probability 1 − p. (ii) Robustness:
+There is model uncertainty in the transition probability p, such that p ∈ [p, p], representing the uncertainty
+set. (iii) Reward: The reward function for the objective is r0 (s0 ) = 1 and r0 (s1 ) = 0. The reward function
+for the constraint is r1 (s0 ) = 0 and r1 (s1 ) = 1. (iv) Constraints: The goal is to maximize the expected
+cumulative reward of r0 while ensuring that the expected cumulative reward of r1 meets a specified threshold
+ρ under the worst-case transition probabilities.
+
+
+                                                           6
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+       (a) Transitions under action a0                                         (b) Transitions under action a1
+
+
+
+
+Figure 1: The transition diagram of the MDP considered in Theorem 3.1. At state s1 , the agent always
+moves to state s0 with probability 1, regardless of the action taken. At state s0 , the agent has a probability
+p of staying in the current state when taking action a1 , and a probability of 1 of staying in state s0 when
+taking action a0 . The uncertainty only occurs in the transition probability p; we let it vary from [p, p].
+
+
+3.2   Analysis of the Duality Gap
+
+The robust control problem can be formulated as:
+
+                                                 max    Ve0π (s0 )                                               (6)
+                                                   π
+
+                                                  s.t. Ve1π (s0 ) ≥ ρ,                                           (7)
+
+where Veiπ (s0 ) denotes the worst-case value function for reward ri starting from state s0 .
+The associated Lagrangian is:
+
+                                                      1                            γπ1 (1 − p)
+                                                                                                        
+      L(π, λ) = Ve0π − λ(ρ − Ve1π ) =                                 −λ ρ−                                .
+                                         1 − γ + π1 (1 − p)(γ − γ 2 )       1 − γ + π1 (1 − p)(γ − γ 2 )
+
+with λ ≥ 0, where π1 := π(a1 |s0 ).
+We proceed to analyze the Lagrangian function and compute the duality gap by evaluating both the primal
+and dual formulations:
+
+Primal Problem The primal optimization problem given by Equation (3) aims to find the policy π that
+maximizes Ve0π (s0 ) while satisfying the constraint (7). Here, we directly solve it and obtain
+
+                                                                             1−p
+                                                                         ρ
+                                                   1                         1−p
+                           max min L(π, λ) =          −                                    .
+                             π     λ              1−γ                               1−p
+                                                            1 − ρ(1 − γ) + ρ(1 − γ)
+                                                                                    1−p
+
+Dual Problem The dual problem given by Equation (4) involves minimizing the Lagrangian over λ ≥ 0
+for a fixed policy π, and then maximizing over π. The lack of convexity in the robust setting leads to a
+discrepancy between the solutions obtained from the primal and dual problems.
+
+                                                        1    1 − p 1 + (1 − p)γ
+                                 min max L(π, λ) =         −                    ρ.
+                                  λ     π              1−γ   1 − p 1 + (1 − p)γ
+
+It can be obviously observed that when the robustness is absent (i.e. p = p), the primal problem presents
+the same value as the dual problem.
+
+
+                                                          7
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Algorithm 1: Rectified Robust Policy Optimization
+Input : initial policy parameters θ0 , empty set N0
+for t = 0, · · · , T − 1 do
+   // Robust Policy Evaluation (e.g. Algorithm 2)
+   Evaluate value functions under πt := πθt : Q̂πi t (s, a) ≈ Qπi t (s, a) for i = 0, 1, . . . , I ;
+   Sample state-action pairs (sj , aj ) from the nominal distribution ;
+   Compute value estimates Viπt for i = 0, . . . , I ;
+   if Viπt ≥ di − δ for all i = 0, 1, . . . , I then
+       // Threshold Updates
+       Add θt to set N0 and track the feasible policy achieving the largest value πout = πt ;
+       Update d0 : dt+1 0   ← V0πt ;
+      else if Viπt < di − δ for some i = 1, . . . , I then
+         // Constraint Rectification
+         Maximize Viπt using Equation (8);
+      else if V0πt < d0 − δ then
+         // Objective Rectification
+         Maximize V0πt using Equation (8);
+return: πout
+
+
+Demonstration of the Duality Gap By selecting values for the parameters (e.g., p = 0.5, p = 0.25,
+p = 0.75, γ = 0.5, and ρ = 1), we can compute the exact values of the duality gap:
+                                                                                          21
+                                   D = max min L(π, λ) − min max L(π, λ) =                   .
+                                          π      λ≥0               λ≥0   π                22
+As the result, the strong duality does not generally hold for robust constrained MDPs.
+
+Implications of a Non-Zero Duality Gap We have just presented a counterexample showing that strong
+duality does not generally hold in robust constrained MDPs, which resolves an open problem regarding the
+strong duality of robust constrained RL problems, highlighting the importance of designing solution methods
+that do not rely solely on duality. In the subsequent sections, we address these challenges by proposing the
+primal-only approach, RRPO.
+
+4      Solving Robust Constrained RL with Unknown Transition Kernel
+
+The lack of strong duality in robust constrained RL presents significant challenges for traditional primal-dual
+optimization methods. The presence of a non-zero duality gap means that these methods may fail to find
+feasible and optimal policies in robust constrained settings. To overcome this obstacle, we develop a primal-
+only algorithm specifically designed for solving robust constrained RL with unknown transition kernel, which
+we call RRPO.
+
+4.1     Algorithm Design
+
+Given the primal optimization problem:
+
+                                        max       V0π (µ)
+                                          π
+                                          s.t.    Viπ (µ) ≥ di , for i = 1, 2, . . . I.
+
+Here, we note that all Viπ (i = 0, 1, . . . , I) represent the robust value functions; when i = 0, we call V0π the
+objective value function, while when i ̸= 0, we call Viπ the constraint value function. The core concept of
+the CRPO algorithm (Xu et al., 2021) is to iteratively update the policy by taking gradients with respect
+
+
+                                                               8
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Algorithm 2: Robust Linear Temporal Difference (Zhou et al., 2024)
+Input : policy π, number of steps K, value function approximation Vw = ψ ⊤ w
+Initialize: w0 , s0 ;
+for k = 0, . . . , K − 1 do
+   Sample action ak ∼ π(· | sk );
+   Sample transition batch yk+1 according to the nominal kernel P0 (·|sk , ak );
+   // For IPM estimator: (Zhou et al., 2024)
+                                  h                                                  i
+   Update wk+1 ← wk + αk ψ(sk ) r(sk , ak ) + γVwk (yk+1 ) − γδ∥wk,2:d ∥ − ψ(sk )⊤ wk ;
+return wK
+
+
+to either the objective function or the constraints, depending on whether the current policy violates any
+constraints:
+
+• If the constraint Viπ (i = 1, 2, . . . , I) is violated, then the CRPO algorithm updates the violated constraint
+  value function Viπ .
+
+• If all constraints are not violated, then the CRPO algorithm updates the objective value function V0π .
+
+However, when constraints are near their boundaries, this method can lead to oscillations, making it difficult
+to track the performance of feasible policies and potentially resulting in unsafe policy outcomes when the
+model uncertainty presents. As the result, the algorithm cannot “remember" the highest objective value
+achieved by the feasible policy. To mitigate these limitations, our RRPO algorithm adopts a reformulated
+approach. Rather than following the standard CRPO routine, we leverage the constrained form of the
+original optimization problem to employ the CRPO algorithm as follows. We reformulate it into the following
+constrained maximization problem by introducing an auxiliary variable d0 :
+
+                                      max     d0
+                                      d0 ,π
+
+                                       s.t.   V0π (µ) ≥ d0 ,
+                                              Viπ (µ) ≥ di , for i = 1, 2, . . . I.
+
+At each iteration, the algorithm evaluates the robust value functions Viπt for all i = 0, 1, . . . , I. Based on
+these evaluations, the algorithm proceeds in one of three categories:
+
+1. Threshold Updates: If the current policy satisfies all constraints within a specified tolerance δ (that is,
+   Viπt ≥ di − δ for i = 0, 1, . . . , I), the algorithm updates the boundary threshold by setting d0 ← V0πt (µ).
+
+2. Constraint Rectification: If any constraint is violated beyond the tolerance δ (that is, there exists
+   i = 1, 2, . . . , I, Viπt (µ) > di − δ), the algorithm performs policy improvement steps to maximize the
+   violated constraint, aiming to reduce constraint violation.
+
+3. Objective Rectification: If the objective value V0πt (µ) is less than the current best boundary threshold
+   d0 − δ, the algorithm performs policy improvement steps to recover the objective value.
+
+This procedure ensures that the policy maintains pursuing the feasibility while making progress towards
+optimizing the objective function. This procedure is summarized in Algorithm 1.
+
+Robust Policy Evaluation Subroutine We consider the robust policy evaluation subroutine as a mod-
+ular component decoupled from policy optimization. This procedure estimates the Q-function used in the
+natural policy gradient update. At each iteration, the agent interacts with the environment under the current
+policy πt to collect trajectories consisting of (s, a, r, s′ ) tuples. These samples are used to estimate the robust
+
+
+                                                           9
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Q-function Qπi t (s, a) for both the objective (i = 0) and each constraint (i = 1, . . . , I). For value approxima-
+tion, we adopt robust temporal-difference (TD) learning methods tailored to the chosen uncertainty model
+(e.g., p-norm or IPM uncertainty). Specifically, given a nominal transition model and an uncertainty set,
+we compute the worst-case expected value using closed-form solutions or dual formulations from prior work
+(e.g., Kumar et al. (2023); Zhou et al. (2024); Wang & Zou (2021)). These robust Q-estimates are then used
+to guide policy updates via a natural policy gradient step. The data collection procedure incorporated with
+this subroutine is further described in the Algorithm 1.
+
+4.2   Handling Uncertainty
+
+In our proposed algorithm design, we apply the robust natural policy gradient (Lemma 2, Zhou et al. (2024))
+to maximize the value function. The update rule of maximizing Viπt (µ) is given by
+
+                                                    exp ηQπi t (s, a)/(1 − γ)
+                                                                                
+                                      πt+1 (a|s) = πt (a|s)                       ,                            (8)
+                                                                    Zt
+
+where the normalization factor Zt is defined as Zt := a∈A πt (a|s) exp ηQπi t (s, a)/(1 − γ) . When consider-
+                                                       P                                        
+
+ing the softmax parametrization πθ (a|s) := Pexp(θ(s,a))
+                                                 exp(θ(s,a′ )
+                                                              , it is shown by Zhou et al. (2024) that this update
+                                                      a′
+rule is equivalent to
+
+                                            θt+1 (s, a) = θt (s, a) + ηQπi t (s, a),                           (9)
+
+where θ is taken over RS×A . Throughout this paper, we will use the parametric and policy representations
+interchangeably. In updating the policy, accurate evaluation of Qπi (s, a) is critical. To achieve this, we
+decouple the robust value function evaluation from the policy optimization step. This modular design allows
+us to integrate existing robust RL methods for value function approximation effectively.
+Below, we highlight several promising approaches for approximating the robust value function:
+
+• p-norm uncertainty set (Kumar et al., 2023): For each state-action pair (s, a), define
+
+                                       U(s,a) = { u ∈ R|S| | ⟨u, 1⟩ = 0, ∥u∥p ≤ β}.
+
+   Let P0 be the nominal transition distribution. Then the corresponding uncertainty sets for transition
+   probabilities are given by
+
+                   P(s,a) :=         P0 (· | s, a) + u | u ∈ U(s,a) ,     and     P := ×(s,a)∈S×A P(s,a) .    (10)
+                                 
+
+
+   As shown in Proposition 2.3 of Kumar et al. (2023), the standard TD-learning algorithm can be applied,
+   with adding a correction term, to compute the robust value function under this p-norm uncertainty model.
+
+• The integral probability metric (IPM) uncertainty set (Zhou et al., 2024): Let F ⊂ R|S| be a
+  function class including the zero function. The IPM is defined as dF (p, q) = supf ∈F {p⊤ f − q ⊤ f }. The
+  IPM uncertainty set is defined as
+
+                 P(s,a) :=       Ps,a | dF (Ps,a , P0 (·|s, a)) ≤ β ,       and    P := ×(s,a)∈S×A P(s,a) .
+                             
+
+
+   Using the robust TD-learning algorithm (Algorithm 2, Zhou et al. (2024)), we can compute an approximate
+   robust value function V̂iπ (µ). By leveraging the relationship between the robust value function and the
+   robust Q-function (Proposition 2.2, Li et al. (2022)), along with the analytical worst-case formulation
+   (Proposition 1, Zhou et al. (2024)), we can derive an approximate robust Q-function.
+
+We acknowledge that other approaches also exist for approximating the robust Q-value function, such as
+Wang et al. (2023a); Sun et al. (2024); we omit these results due to the limited pages.
+
+
+                                                              10
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+4.3   Global Convergence Guarantees
+
+In this subsection, we establish the global convergence guarantee for RRPO under certain assumptions.
+Specifically, we assume: (1) The robust policy evaluation provides sufficiently accurate estimates. (2) Under
+the worst-case scenario, the policy still maintains sufficient exploration.
+Assumption 4.1 (Policy Evaluation Accuracy). The approximate robust value functions Q̂πi (s, a) satisfy
+|Q̂πi (s, a) − Qπi (s, a)| ≤ ϵapprox for all s ∈ S, a ∈ A, and i = 0, . . . , I.
+
+This assumption of sufficient accuracy in policy evaluation is mild and is widely adopted in the existing
+reinforcement learning literature (Wang et al., 2019; Cayci et al., 2022; Xu et al., 2021; Hong et al., 2023).
+As previously noted, this condition can be readily satisfied for specific uncertainty sets. We will discuss the
+value of ϵapprox in the appendix.
+Assumption 4.2 (Worst-Case Exploration). For any policy π and its worst-case transition P , there exists
+pmin > 0 such that its state visitation probability satisfies dπ,P
+                                                                 µ (s) ≥ pmin for all s ∈ S, where dµ
+                                                                                                     π,P
+                                                                                                         is the
+state visitation distribution starting from initial distribution µ under policy π and transition P .
+Remark 4.3. This assumption imposes a uniform lower bound for all policies π; another widely accepted
+assumption is made on the finite-horizon scenario (He et al., 2025), which adopt a complementary requirement
+that caps the relative re-weighting between nominal and adversarial dynamics. Exploring algorithms that
+retain our absolute-coverage guarantee while accommodating the ratio-based perspective of He et al. (2025)
+is an interesting avenue for future work.
+The exploration assumption can hold under appropriate exploration mechanisms, especially with classical
+exploration techniques e.g. the initial state randomization; instead of a fixed initial state, we may use a
+uniform distribution over the state space, ensuring the state visitation probability is always lower bounded.
+Moreover, this assumption de facto weakens some existing assumptions; for example, Theorem 2 (Chen &
+Huang, 2024) assumes there exists pmin > 0 such that inf s,a,s′ P (s′ |s, a) ≥ pmin for all uncertainty transition
+P . Assumption 2 (Zhou et al., 2024) assumes that the nominal transition is supported by all transitions in
+the given uncertainty set. If we are given the access to the robust policy evaluation oracle (Theorem 4.1),
+these widely used assumptions could be replaced with requiring the exploration on the worst-case transition
+instead of each transition in the uncertainty set.
+Assumption 4.4. The diameter of the uncertainty set c is given as
+
+                                     sup sup dTV (P (·|s, a), P ′ (·|s, a)) ≤ c.
+                                    P,P ′ ∈C s,a
+
+
+This bounded-diameter condition restricts the variability of transition kernels within the uncertainty set.
+Intuitively, it ensures that all candidate models in C are uniformly close to each other in terms of total
+variation distance, so the adversarial environment cannot deviate arbitrarily from the nominal dynamics.
+Such boundedness assumptions are standard in robust RL and are used by Ma et al. (2023), serving as a
+mild regularity condition to ensure well-posedness of the optimization problem.
+Our main theoretical result is as follows. Here, we present a simplified version to highlight the most critical
+components, including the convergence rate and sample complexity. The detailed upper bound is provided
+in Section C.
+Theorem 4.5. Consider the NPG update rule Equation (8) with the learning rate η = Θ( √1T ). Let the
+constraint violation tolerance δ = Θ( √1T )+O(c), and the approximation error ϵapprox = Θ( √1T ). Under these
+conditions, there exists an iteration T such that the output policy πout satisfies
+                                                                  1
+                                    E[V ∗ (µ) − V πout (µ)] = O( √ )+O(c),
+                                                                   T
+                ∗
+where V ∗ := V π for the optimal feasible policy π ∗ and
+
+                                         max di − Viπout (µ)
+                                              
+                                                                   ≤ δ.
+                                              i
+
+
+                                                        11
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Remark 4.6. Compared to Kitamura et al. (2025), which achieves a complexity of O(ϵ−4 ) for exact conver-
+gence, our results establish a faster rate of O(ϵ−2 ), up to an additional constant error determined by the
+uncertainty set diameter c. Specifically, our method converges to a neighborhood of the optimal policy, with
+the residual value error bounded by c. When c is sufficiently small (e.g., when the uncertainty set is chosen
+to be small), our approach yields a strictly faster convergence rate up to an additive O(c) term. The full
+version of Theorem 4.5 and the detailed proof are provided in Section C.
+
+Discussion on the correction from the previous version of this work In our initial submission1 , we
+did not include the dependence on the uncertainty diameter c in the upper bound. This oversight was iden-
+tified through the OpenReview discussion (https://openreview.net/forum?id=7l63xwAgAW). Specifically,
+the problem arose because Theorem C.5 incorrectly upper bounded the advantage function when it takes
+negative values. In the current version, we have addressed this issue by introducing Theorem 4.4. Using
+the proposed RRPO (Algorithm 1), there is a constant gap linearly depending on the uncertainty diameter
+c, and cannot be closed for any ϵ less than this tolerance. Also, as indicated by Theorem 4 (Panaganti &
+Kalathil, 2022), if only learnt using the nominal model, one can show that the policy will incur another
+constant cost. Hence, the algorithm that solves CMDP (and thus, the CRPO) should have the same bound
+for this given constant.
+
+
+4.4    Discussion
+
+As shown in Theorem 4.5, to achieve ϵ-accuracy to the optimal feasible policy π ∗ up to a constant error
+term depending on the uncertainty diameter c, it takes at most O(ϵ−2 ) iterations. Here, we use a specific
+uncertainty set to illustrate how the O(ϵ−4 ) sample complexity is obtained. Assume we are considering the
+(s, a)-rectangular uncertainty set defined by the p-norm:
+
+                                     U(s,a) = {u ∈ R|S| | ⟨u, 1⟩ = 0, ∥u∥p ≤ β}.
+
+Let P0 be the nominal distribution. Then
+
+                      P(s,a) := {P0 (·|s, a) + u | u ∈ U(s,a) },   and   P := ×(s,a)∈S×A P(s,a) ,
+
+are the uncertainty set we consider. At each step t, we learn an ϵ-accurate robust Q-function, which takes
+O(ϵ−2 ) samples; this complexity is guaranteed by applying its Proposition 4.7, Kumar et al. (2023), to
+the standard TD-learning algorithm. Since Algorithm 1 requires T = O(ϵ−2 ) iterations (to obtain an
+approximated optimal policy up to a O(c)-level error) and the ϵ-accurate policy evaluation requires K =
+O(ϵ−2 ) samples, the total sample complexity is given by T · K = O(ϵ−4 ).
+
+Comparison with Kitamura et al. (2025) While Kitamura et al. (2025) also employs a constrained-
+form optimization framework (called the epigraph formulation), our approach is fundamentally different. (1)
+Their method updates the maximum constraint violation, while we adopt the original CRPO update rule
+with tracking the auxiliary parameter. (2) Their algorithm requires an additional binary search step, while
+our method preserves the simplicity of the CRPO framework without such overhead.
+
+
+5     Numerical Examples
+
+To better illustrate the impact of model uncertainty on the algorithm performance, especially on the worst-
+case feasibility, we conducted experiments comparing the proposed RRPO and the CRPO (Xu et al., 2021).
+For all experiments, we used a discount factor γ = 0.99 and the 2-norm uncertainty set defined by Equa-
+tion (10).
+
+    1 https://openreview.net/notes/edits/attachment?id=sTVCrqgWu6&name=pdf
+
+
+
+
+                                                           12
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+5.1   The FrozenLake-Like Gridworld
+
+First, we consider a specific 4 × 6 FrozenLake-like gridworld environment: The agent starts from the left-top
+corner posstart = [1, 1] and can make four actions,
+
+                                     A = {UP, DOWN, LEFT, RIGHT},
+
+to move to the target point postarget = [2, 5].
+
+
+
+
+Figure 2: Illustration of two paths to the target in the grid-world environment. The shortest path (Left)
+prioritizes efficiency but risks violating constraints in slippery conditions, whereas the longer path (Right)
+always ensures safety in the worst-case scenario.
+
+We define two reward functions. The main reward function r0 is defined as
+                                             
+                                             +1
+                                                   if s′ is the target
+                              r0 (s, a, s ) = −1
+                                         ′
+                                                    if s′ is a brown block .
+                                               −0.1 otherwise
+                                             
+                                             
+
+It gives +1 for reaching the target, −1 for landing on a brown block, and −0.1 otherwise. The constraint
+reward function r1 is defined as:
+                                             
+                                             −1 if s is out of the boundary
+                                                    ′
+
+                              r1 (s, a, s ) = −1 if s′ is a brown block
+                                         ′
+                                                                             .
+                                               0  otherwise
+                                             
+                                             
+
+It assigns −1 for stepping out of the boundary or onto a brown block, and 0 otherwise, leading to a cost
+function c(s, a) := −E[r1 (s, a, s′ )]. We require −V1π (µ) < 0.2, ensuring the agent avoids hitting brown blocks
+or moves out of the boundary. The training environment is deterministic, where each action leads to the
+intended movement with probability one unless the agent hits a boundary or a brown block. When this
+happens, the agent’s position is not changed (if it hits the boundary) or is reset to the starting position (if
+it hits the brown block). The test environment introduces a “slippery” dynamic, where every move has a
+probability p of resulting in an unintended slip. This slippery setting mimics conditions that may not have
+been foreseen during training, effectively representing a worst-case scenario. Under this setting, the obstacles
+construct two distinct paths routing to the target, which is illustrated in Figure 2.
+We apply our proposed RRPO to solve this constrained robust RL problem, comparing it with the baseline
+CRPO method. As shown in Figure 3a, our method successfully learns the safer path, while the non-robust
+algorithm converges to the shortest path.
+
+5.2   Mountain Car
+
+We also consider the classical Mountain Car environment from Gymnasium (Towers et al., 2024) to test the
+performance of the proposed RRPO in the classical control problem. We use its default reward function r0 ,
+which penalizes −1.0 each step and rewards 0 if the agent reaches the goal; that is,
+                                              (
+                                                0  if the agent reaches the goal,
+                              r0 (s, a, s ) =
+                                         ′
+                                                −1 otherwise.
+
+
+                                                       13
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+(a) Illustration of two paths to the target in the grid-      (b) Reward and cost comparison across nominal and
+world environment. The shortest path (Left) prioritizes       worst-case transitions for the mountain car environment.
+efficiency but risks violating constraints in slippery con-   In the nominal environment, both algorithms learn the
+ditions, whereas the longer path (Right) always ensures       desired strategies to reach the goal; however, in the worst-
+safety in the worst-case scenario.                            case scenario, the RRPO algorithm can learn more robust
+                                                              strategy to avoid exceeding the speed constraint.
+
+Figure 3: Reward and cost trajectories for CRPO and RRPO under nominal and worst-case transitions in
+Grid World (Figure 3a) and Mountain Car (Figure 3b) environments.
+
+
+
+To emphasize safety, we add a constraint reward function r1 (s, a, s′ ) defined as
+
+                                               (
+                                                −1    if the car’s speed exceeds 0.06,
+                               r1 (s, a, s ) =
+                                         ′
+                                                0     otherwise.
+
+
+It returns −1.0 whenever the car’s speed exceeds 0.06 and returns 0 otherwise, which encourages the agent to
+maintain a safe speed throughout its run. We also consider its cost description as c(s, a) := −Es′ [ r1 (s, a, s′ )].
+For the environment uncertainty, we perturb the “gravity” parameter of the Mountain Car environment. In
+the worst-case scenario, the gravity is increased from the nominal value 0.0025 to 0.003. The experiment
+results are shown in Figure 3b; the proposed RRPO method receives much less cost in the worst-case
+environment.
+
+
+6    Extended Experiments: Robust Control
+
+Additionally, we compare the performance of the RRPO algorithm with other robust RL baselines, including
+the robust policy gradient and the robust primal-dual policy gradient methods, on the HalfCheetah-v4
+environment from Robust Gymnasium (Gu et al., 2025). We also conduct an ablation study to evaluate the
+impact of our modification to the original robust CRPO algorithm, demonstrating that it effectively reduces
+oscillations near the constraint boundary. Although the Safety MuJoCo environment (Gu et al., 2024a), also
+available in Robust Gymnasium, offers benchmarks with hard safety constraints, its formulation requires
+additional adaptation to fit our setting. Therefore, we employ a custom energy constraint that penalizes
+energy consumption at each step. We include the experiment details and the hyper-parameter setting in
+Section D.4.
+
+
+                                                          14
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Figure 4: Comparison among our proposed RRPO algorithm and other robust RL baselines in the robust
+HalfCheetah environment (shown in the left panel). The standard robust policy gradient algorithm achieves
+the highest score but violates the energy constraint as shown in the right panel. Within the given constraint,
+RRPO outperforms the primal-dual approach as shown in the middle panel.
+
+
+6.1   Comparison with Other Robust RL Algorithms
+
+We conducted a comparative evaluation of three robust RL algorithms on the HalfCheetah-v4 environment
+from Robust Gymnasium (Gu et al., 2025): (i) Robust Policy Gradient. (ii) Robust Primal-Dual Policy
+Gradient. (iii) Our proposed RRPO algorithm.
+The agent learns to maximize forward locomotion speed while respecting energy consumption constraints.
+The reward function follows the standard HalfCheetah formulation:
+
+                                    r0 (s, a) = forward_velocity − 0.1∥a∥2 ,
+
+encouraging rapid forward movement while penalizing excessive control effort. Crucially, we implement a
+separate energy constraint defined as the squared L2 norm of the action vector
+
+                                               r1 (s, a) = −∥a∥2
+
+with a threshold of −0.25 (note that this threshold is applied to the value function instead of the current step
+cost; it does not apply to the constraint cost shown in Figure 3). We include the detailed hyper-parameter
+setting in Section D.4.
+
+6.2   Ablation: Robust CRPO Algorithm
+
+In the ablation experiment, we compare our RRPO algorithm with the Robust version of CRPO algo-
+rithm (that is, we replace the value function used in the CRPO algorithm with the robust value function).
+The only difference presented here is the rectification mechanism used in Algorithm 1 where the RRPO
+algorithm tracks the best feasible policy as the πout in the threshold update step. We follow the same setting
+as described in Section D.4. To compare both methods, we evaluate the variance of the primal reward of the
+output policy. In the RRPO algorithm, this variance primarily stems from inherent randomness in the policy
+and environment. In CRPO, however, an additional source of variance arises from the random sampling of
+the output policy. As a result, CRPO exhibits substantially higher variance than RRPO.
+
+7     Conclusion
+
+In this paper, we investigated robust constrained RL problems and demonstrated that strong duality generally
+DOES NOT hold in this setting, thereby limiting the effectiveness of some methods which rely on the strong
+duality. To address this challenge, we introduced RRPO, a primal-only algorithm that directly optimizes the
+policy while rectifying constraint violations without relying on dual formulations. Our theoretical analysis,
+under mild boundedness and exploration assumptions, provided convergence guarantees for RRPO, ensuring
+that it converges to an approximately optimal policy up to a O(c)-level value function error that satisfies the
+
+
+                                                      15
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Figure 5: Comparison of the variance of the primal reward r0 of the output policy from CRPO (Xu et al.,
+2021) and the RRPO (Algorithm 1). The CRPO method exhibits substantially higher variance than RRPO.
+
+
+constraints within a specified tolerance under worst-case scenarios. Empirical results validate the effectiveness
+of our approach. We believe our work opens new avenues for exploring and designing non-primal-dual
+approaches to solve robust constrained RL problems, and potentially leads to an interesting direction to
+identify when the strong duality of robust constrained RL holds.
+
+Acknowledgments
+
+We are especially grateful to Arnob Ghosh and Toshinori Kitamura for their valuable feedback on our
+manuscript posted on OpenReview (https://openreview.net/forum?id=7l63xwAgAW). Their comments
+helped us improve the presentation and correct a technical error in the earlier version. The work of Yi Zhou
+was supported by the National Science Foundation under grants DMS-2134223, ECCS-2237830. Shaocong
+Ma, Ziyi Chen, Heng Huang are partially supported by NSF IIS 2347592, 2348169, DBI 2405416, CCF
+2348306, CNS 2347617, RISE 2536663.
+
+References
+Joshua Achiam, David Held, Aviv Tamar, and Pieter Abbeel. Constrained policy optimization. In Proceedings
+  of the 34th International Conference on Machine Learning (ICML), pp. 22–31, 2017.
+
+Eitan Altman. Constrained Markov Decision Processes. CRC Press, 1999.
+
+Kavosh Asadi, Shoham Sabach, Yao Liu, Omer Gottesman, and Rasool Fakoor. Td convergence: An opti-
+ mization perspective. Advances in Neural Information Processing Systems, 36, 2024.
+
+J. Andrew Bagnell, Andrew Y. Ng, and Jeff G. Schneider. Solving uncertain markov decision processes.
+  Technical Report CMU-RI-TR-01-25, Carnegie Mellon University, 2001.
+
+Qinbo Bai, Amrit Singh Bedi, Mridul Agarwal, Alec Koppel, and Vaneet Aggarwal. Achieving zero constraint
+  violation for constrained reinforcement learning via primal-dual approach. In Proceedings of the AAAI
+  Conference on Artificial Intelligence, volume 36, pp. 3682–3689, 2022.
+
+Felix Berkenkamp, Matteo Turchetta, Angela P. Schoellig, and Andreas Krause. Safe model-based rein-
+  forcement learning with stability guarantees. In Advances in Neural Information Processing Systems 30
+  (NIPS), pp. 908–919, 2017.
+
+Dimitri P. Bertsekas, Angelia Nedic, and Asuman E. Ozdaglar. Convex Analysis and Optimization. Athena
+  Scientific, Belmont, MA, 2003. ISBN 1886529450.
+
+
+                                                       16
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Jose Blanchet, Miao Lu, Tong Zhang, and Han Zhong. Double pessimism is provably efficient for distribu-
+  tionally robust offline reinforcement learning: Generic algorithm and robust partial coverage. Advances in
+  Neural Information Processing Systems, 36:66845–66859, 2023.
+Vivek S. Borkar. An actor-critic algorithm for constrained Markov decision processes. Systems & Control
+  Letters, 54(3):207–213, 2005.
+Stephen Boyd and Lieven Vandenberghe. Convex Optimization. Cambridge University Press, Cambridge,
+  2004. ISBN 9781316179512.
+David Brandfonbrener and Joan Bruna. Geometric insights into the convergence of nonlinear td learning.
+  arXiv preprint arXiv:1905.12185, 2019.
+Daniel S. Brown, Scott Niekum, and Marek Petrik. Bayesian robust optimization for imitation learning. In
+ Advances in Neural Information Processing Systems 33 (NeurIPS), 2020.
+Steven Carr, Nils Jansen, Sebastian Junges, and Ufuk Topcu. Safe reinforcement learning via shielding under
+  partial observability. In Proceedings of the 37th AAAI Conference on Artificial Intelligence (AAAI), 2023.
+Semih Cayci, Niao He, and R Srikant. Finite-time analysis of entropy-regularized neural natural actor-critic
+  algorithm. arXiv preprint arXiv:2206.00833, 2022.
+Yichen Chen and Mengdi Wang. Stochastic primal-dual methods and sample complexity of reinforcement
+  learning. arXiv preprint arXiv:1612.02516, 2016.
+Ziyi Chen and Heng Huang. Accelerated policy gradient for s-rectangular robust mdps with large state
+  spaces. In Forty-first International Conference on Machine Learning, 2024.
+Ziyi Chen, Shaocong Ma, and Yi Zhou. Finding correlated equilibrium of constrained markov game: A
+  primal-dual approach. Advances in Neural Information Processing Systems, 35:25560–25572, 2022.
+Yinlam Chow, Mohammad Ghavamzadeh, Lucy Janson, and Marco Pavone. Risk-constrained reinforcement
+  learning with percentile risk criteria. Journal of Machine Learning Research, 18:1–51, 2018a.
+Yinlam Chow, Ofir Nachum, Edgar Duenez-Guzman, and Mohammad Ghavamzadeh. A lyapunov-based
+  approach to safe reinforcement learning. In Advances in Neural Information Processing Systems, pp.
+  8092–8101, 2018b.
+Gal Dalal, Krishnamurthy Dvijotham, Matej Vecerik, Todd Hester, Cosmin Paduraru, and Yuval Tassa. Safe
+ exploration in continuous action spaces. In Proceedings of the AAAI Conference on Artificial Intelligence,
+ 2018a.
+Gal Dalal, Elad Gilboa, Shie Mannor, and Amnon Shashua. Safe exploration in continuous action spaces. In
+ Proceedings of the 32nd International Conference on Neural Information Processing Systems, pp. 2752–
+ 2761, 2018b.
+Erick Delage and Shie Mannor. Percentile optimization for Markov decision processes with parameter un-
+  certainty. Operations Research, 58(1):203–213, 2010.
+Esther Derman, Matthieu Geist, and Shie Mannor. Twice regularized mdps and the equivalence between
+  robustness and regularization. Advances in Neural Information Processing Systems, 34:22274–22287, 2021.
+Dongsheng Ding, Shaofeng Zhang, Tianxing Zhang, and Liwei Wang. Natural policy gradient primal-dual
+ method for constrained markov decision processes. In Advances in Neural Information Processing Systems,
+ pp. 19138–19148, 2020.
+Wenhao Ding, Laixi Shi, Yuejie Chi, and Ding Zhao. Seeing is not believing: Robust reinforcement learning
+ against spurious correlation. In Advances in Neural Information Processing Systems (NeurIPS), 2023.
+Arnob Ghosh. Sample complexity for obtaining sub-optimality and violation bound for distributionally
+  robust constrained mdp. In First Reinforcement Learning Safety Workshop, 2024.
+
+
+                                                    17
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Vineet Goyal and Julien Grand-Clement. Robust Markov decision processes: Beyond rectangularity. Math-
+  ematics of Operations Research, 48(1):203–226, 2023.
+
+Julien Grand-Clément and Christian Kroer. Scalable first-order methods for robust mdps. In Proceedings of
+  the AAAI Conference on Artificial Intelligence, volume 35, pp. 12086–12094, 2021.
+
+Shangding Gu, Bilgehan Sel, Yuhao Ding, Lu Wang, Qingwei Lin, Ming Jin, and Alois Knoll. Balance
+  reward and safety optimization for safe reinforcement learning: A perspective of gradient manipulation.
+  In Proceedings of the AAAI Conference on Artificial Intelligence, volume 38, pp. 21099–21106, 2024a.
+
+Shangding Gu, Long Yang, Yali Du, Guang Chen, Florian Walter, Jun Wang, and Alois Knoll. A review of
+  safe reinforcement learning: Methods, theories and applications. IEEE Transactions on Pattern Analysis
+  and Machine Intelligence, 2024b.
+
+Shangding Gu, Laixi Shi, Muning Wen, Ming Jin, Eric Mazumdar, Yuejie Chi, Adam Wierman, and Costas
+  Spanos. Robust gymnasium: A unified modular benchmark for robust reinforcement learning. In The
+  Thirteenth International Conference on Learning Representations, 2025. URL https://openreview.
+  net/forum?id=2uQBSa2X4R.
+
+Dong-Sig Han, Hyunseo Kim, Hyundo Lee, JeHwan Ryu, and Byoung-Tak Zhang. Robust imitation via
+ mirror descent inverse reinforcement learning. In Advances in Neural Information Processing Systems
+ (NeurIPS), 2022.
+
+Songyang Han, Sanbao Su, Sihong He, Shuo Han, Haizhao Yang, Shaofeng Zou, and Fei Miao. What is
+  the solution for state-adversarial multi-agent reinforcement learning? Transactions on Machine Learning
+  Research, 2024. ISSN 2835-8856. URL https://openreview.net/forum?id=HyqSwNhM3x.
+
+Sihong He, Songyang Han, Sanbao Su, Shuo Han, Shaofeng Zou, and Fei Miao. Robust multi-agent rein-
+  forcement learning with state uncertainty. Transactions on Machine Learning Research (TMLR), 2023a.
+  ISSN 2835-8856. URL https://openreview.net/forum?id=CqTkapZ6H9.
+
+Sihong He, Yue Wang, Shuo Han, Shaofeng Zou, and Fei Miao. A robust and constrained multi-agent rein-
+  forcement learning electric vehicle rebalancing method in amod systems. In 2023 IEEE/RSJ International
+  Conference on Intelligent Robots and Systems (IROS), pp. 5637–5644. IEEE, 2023b.
+
+Yiting He, Zhishuai Liu, Weixin Wang, and Pan Xu. Sample complexity of distributionally robust off-
+  dynamics reinforcement learning with online interaction. In Forty-second International Conference on
+  Machine Learning, 2025. URL https://openreview.net/forum?id=pJdMOKqdSV.
+
+Chin Pang Ho, Marek Petrik, and Wolfram Wiesemann. Fast bellman updates for robust mdps. In Interna-
+  tional Conference on Machine Learning, pp. 1979–1988. PMLR, 2018.
+
+Mingyi Hong, Hoi-To Wai, Zhaoran Wang, and Zhuoran Yang. A two-timescale stochastic algorithm frame-
+ work for bilevel optimization: Complexity analysis and application to actor-critic. SIAM Journal on
+ Optimization, 33(1):147–180, 2023.
+
+Linfang Hou, Liang Pang, Xin Hong, Yanyan Lan, Zhiming Ma, and Dawei Yin. Robust reinforcement
+  learning with wasserstein constraint. arXiv preprint arXiv:2006.00945, 2020.
+
+Jifeng Hu, Yanchao Sun, Hechang Chen, Sili Huang, Haiyin Piao, Yi Chang, and Lichao Sun. Distributional
+   reward estimation for effective multi-agent deep reinforcement learning. In Advances in Neural Information
+   Processing Systems (NeurIPS), 2022.
+
+Garud N. Iyengar. Robust dynamic programming. Mathematics of Operations Research, 30(2):257–280,
+ 2005.
+
+Yuchen Jiao and Gen Li. Minimax-optimal multi-agent robust reinforcement learning. arXiv preprint
+  arXiv:2412.19873, 2024.
+
+
+                                                     18
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Whiyoung Jung, Myungsik Cho, Jongeui Park, and Youngchul Sung. Quantile constrained reinforcement
+ learning: A framework constraining outage probability. In Advances in Neural Information Processing
+ Systems (NeurIPS), 2022.
+Dohyeong Kim, Kyungjae Lee, and Songhwai Oh. Trust region-based safe distributional reinforcement
+ learning for multiple constraints. In Advances in Neural Information Processing Systems (NeurIPS), 2023.
+Toshinori Kitamura, Tadashi Kozuno, Wataru Kumagai, Kenta Hoshino, Yohei Hosoe, Kazumi Kasaura,
+  Masashi Hamaya, Paavo Parmas, and Yutaka Matsuo. Near-optimal policy identification in robust con-
+  strained markov decision processes via epigraph form. In The Thirteenth International Conference on
+  Learning Representations, 2025. URL https://openreview.net/forum?id=G5sPv4KSjR.
+Navdeep Kumar, Esther Derman, Matthieu Geist, Kfir Y Levy, and Shie Mannor. Policy gradient for
+  rectangular robust markov decision processes. Advances in Neural Information Processing Systems, 36:
+  59477–59501, 2023.
+Gen Li, Changxiao Cai, Yuxin Chen, Yuting Wei, and Yuejie Chi. Is q-learning minimax optimal? a tight
+ sample complexity analysis. Operations Research, 72(1):222–236, 2024.
+Yan Li and Alexander Shapiro. Rectangularity and duality of distributionally robust markov decision pro-
+  cesses. arXiv preprint arXiv:2308.11139, 2023.
+Yan Li, Guanghui Lan, and Tuo Zhao. First-order policy optimization for robust markov decision process.
+  arXiv preprint arXiv:2209.10579, 2022.
+Qingkai Liang, Fanyu Que, and Eytan Modiano. Accelerated primal-dual policy optimization for safe rein-
+  forcement learning. arXiv preprint arXiv:1802.06480, 2018.
+Shiau Hong Lim and Huan Xu. Reinforcement learning in robust markov decision processes. In Advances in
+  Neural Information Processing Systems (NIPS), pp. 701–709, 2013.
+Yunan Liu, Shaofeng Zhang, and Liwei Wang. Fast global convergence of policy optimization for constrained
+  mdps. arXiv preprint arXiv:2102.04692, 2021.
+Zhishuai Liu and Pan Xu. Distributionally robust off-dynamics reinforcement learning: Provable efficiency
+  with linear function approximation. In International Conference on Artificial Intelligence and Statistics,
+  pp. 2719–2727. PMLR, 2024a.
+Zhishuai Liu and Pan Xu. Minimax optimal and computationally efficient algorithms for distributionally
+  robust offline reinforcement learning. arXiv preprint arXiv:2403.09621, 2024b.
+Zhishuai Liu and Pan Xu. Linear mixture distributionally robust markov decision processes. arXiv preprint
+  arXiv:2505.18044, 2025.
+Zhishuai Liu, Weixin Wang, and Pan Xu. Upper and lower bounds for distributionally robust off-dynamics
+  reinforcement learning. arXiv preprint arXiv:2409.20521, 2024.
+Miao Lu, Han Zhong, Tong Zhang, and Jose Blanchet. Distributionally robust reinforcement learning
+ with interactive data collection: Fundamental hardness and near-optimal algorithm. arXiv preprint
+ arXiv:2404.03578, 2024.
+Björn Lütjens, Michael Everett, and Jonathan P How. Safe reinforcement learning with model uncertainty
+  estimates. In 2019 International Conference on Robotics and Automation (ICRA), pp. 8662–8668. IEEE,
+  2019.
+Shaocong Ma, Ziyi Chen, Shaofeng Zou, and Yi Zhou. Decentralized robust v-learning for solving markov
+  games with model uncertainty. Journal of Machine Learning Research, 24(371):1–40, 2023.
+Xiaoteng Ma, Zhipeng Liang, Jose Blanchet, Mingwen Liu, Li Xia, Jiheng Zhang, Qianchuan Zhao, and
+  Zhengyuan Zhou. Distributionally robust offline reinforcement learning with linear function approximation.
+  arXiv preprint arXiv:2209.06620, 2022.
+
+
+                                                    19
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Sridhar Mahadevan, Bo Liu, Philip Thomas, Will Dabney, Steve Giguere, Nicholas Jacek, Ian Gemp, and
+  Ji Liu. Proximal reinforcement learning: A new theory of sequential decision making in primal-dual spaces.
+  arXiv preprint arXiv:1405.6757, 2014.
+
+Shie Mannor, Ofir Mebel, and Huan Xu. Lightning does not strike twice: Robust MDPs with coupled
+  uncertainty. In Proceedings of the 29th International Conference on Machine Learning (ICML), 2012.
+
+Shie Mannor, Ofir Mebel, and Huan Xu. Robust mdps with k-rectangular uncertainty. Mathematics of
+  Operations Research, 41(4):1484–1509, 2016.
+
+Teodor Mihai Moldovan and Pieter Abbeel. Safe exploration in Markov decision processes. In Proceedings
+  of the 29th International Conference on Machine Learning (ICML), 2012.
+
+Arnab Nilim and Laurent El Ghaoui. Robust control of Markov decision processes with uncertain transition
+  matrices. Operations Research, 53(5):780–798, 2005.
+
+Kishan Panaganti and Dileep Kalathil. Sample complexity of robust reinforcement learning with a generative
+  model. In International Conference on Artificial Intelligence and Statistics, pp. 9582–9602. PMLR, 2022.
+
+Santiago Paternain, Luiz Chamon, Miguel Calvo-Fullana, and Alejandro Ribeiro. Constrained reinforcement
+  learning has zero duality gap. Advances in Neural Information Processing Systems, 32, 2019.
+
+Lerrel Pinto, James Davidson, Rahul Sukthankar, and Abhinav Gupta. Robust adversarial reinforcement
+  learning. In Proceedings of the 34th International Conference on Machine Learning (ICML), pp. 2817–
+  2826, 2017.
+
+Aurko Roy, Huan Xu, and Sebastian Pokutta. Reinforcement learning under model mismatch. Advances in
+  neural information processing systems, 30, 2017.
+
+Nathan Russel and Marek Petrik. Robust constrained-mdps: Soft-constrained robust policy optimization
+  under model uncertainty. arXiv preprint arXiv:2010.04870, 2020.
+
+Jay K. Satia and Roy E. Lave Jr. Markovian decision processes with uncertain transition probabilities.
+  Operations Research, 21(3):728–740, 1973.
+
+Adam Stooke, Joshua Achiam, and Pieter Abbeel. Responsive safety in reinforcement learning by pid
+  lagrangian methods. In International Conference on Machine Learning, pp. 9133–9143, 2020.
+
+Zhongchang Sun, Sihong He, Fei Miao, and Shaofeng Zou. Constrained reinforcement learning under model
+  mismatch. In Forty-first International Conference on Machine Learning, 2024.
+
+Richard S Sutton, David McAllester, Satinder Singh, and Yishay Mansour. Policy gradient methods for rein-
+  forcement learning with function approximation. In Advances in Neural Information Processing Systems,
+  volume 12, pp. 1057–1063, 1999.
+
+Aviv Tamar, Huan Xu, and Shie Mannor. Scaling up robust mdps by reinforcement learning. arXiv preprint
+  arXiv:1306.6189, 2013.
+
+Cheng Tang, Zhishuai Liu, and Pan Xu. Robust offline reinforcement learning with linearly structured
+  f -divergence regularization. arXiv preprint arXiv:2411.18612, 2024.
+
+Chen Tessler, Daniel J. Mankowitz, and Shie Mannor. Reward constrained policy optimization. In Interna-
+  tional Conference on Learning Representations (ICLR), 2019.
+
+Mark Towers, Ariel Kwiatkowski, Jordan Terry, John U Balis, Gianluca De Cola, Tristan Deleu, Manuel
+ Goulão, Andreas Kallinteris, Markus Krimmel, Arjun KG, et al. Gymnasium: A standard interface for
+ reinforcement learning environments. arXiv preprint arXiv:2407.17032, 2024.
+
+Sharan Vaswani, Lin Yang, and Csaba Szepesvári. Near-optimal sample complexity bounds for constrained
+  mdps. Advances in Neural Information Processing Systems, 35:3110–3122, 2022.
+
+
+                                                    20
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Luca Viano, Yu-Ting Huang, Parameswaran Kamalaruban, Adrian Weller, and Volkan Cevher. Robust
+  inverse reinforcement learning under transition dynamics mismatch. Advances in Neural Information
+  Processing Systems, 34:25917–25931, 2021.
+Akifumi Wachi and Yanan Sui. Safe reinforcement learning in constrained markov decision processes. In
+ International Conference on Machine Learning, pp. 9797–9806. PMLR, 2020.
+Lingxiao Wang, Qi Cai, Zhuoran Yang, and Zhaoran Wang. Neural policy gradient methods: Global opti-
+  mality and rates of convergence. arXiv preprint arXiv:1909.01150, 2019.
+Qiuhao Wang, Chin Pang Ho, and Marek Petrik. Policy gradient in robust mdps with global convergence
+  guarantee. In International Conference on Machine Learning, pp. 35763–35797. PMLR, 2023a.
+Yixuan Wang, Simon S. Zhan, Ruochen Jiao, Zhilu Wang, Wanxin Jin, Zhuoran Yang, Zhaoran Wang,
+  Chao Huang, and Qi Zhu. Enforcing hard constraints with soft barriers: Safe reinforcement learning
+  in unknown stochastic environments. In Proceedings of the 40th International Conference on Machine
+  Learning (ICML), 2023b.
+Yue Wang and Shaofeng Zou. Online robust reinforcement learning with model uncertainty. Advances in
+  Neural Information Processing Systems, 34:7193–7206, 2021.
+Yue Wang and Shaofeng Zou. Policy gradient method for robust reinforcement learning. In Proceedings of
+  the 36th AAAI Conference on Artificial Intelligence (AAAI), pp. 8443–8450, 2022.
+Yue Wang, Fei Miao, and Shaofeng Zou.        Robust constrained reinforcement learning.     arXiv preprint
+  arXiv:2209.06866, 2022.
+Yue Wang, Zhongchang Sun, and Shaofeng Zou. A unified principle of pessimism for offline reinforcement
+  learning under model mismatch. In The Thirty-eighth Annual Conference on Neural Information Process-
+  ing Systems, 2024.
+Zhihai Wang, Taoxing Pan, Qi Zhou, and Jie Wang. Efficient exploration in resource-restricted reinforcement
+  learning. In Proceedings of the AAAI Conference on Artificial Intelligence, volume 37, pp. 10279–10287,
+  2023c.
+Wolfram Wiesemann, Daniel Kuhn, and Berç Rustem. Robust Markov decision processes. Mathematics of
+ Operations Research, 38(1):153–183, 2013.
+Huan Xu and Shie Mannor. The robustness-performance tradeoff in Markov decision processes. In Advances
+ in Neural Information Processing Systems 19 (NIPS), pp. 1537–1544, 2006.
+Tengyu Xu, Yingbin Liang, and Guanghui Lan. Crpo: A new approach for safe reinforcement learning with
+  convergence guarantee. In International Conference on Machine Learning, pp. 11480–11491. PMLR, 2021.
+Lantao Yang and Chongjie Zhang. Projection-based constrained policy optimization. In Advances in Neural
+  Information Processing Systems, pp. 12345–12356, 2020.
+Yihang Yao, Zuxin Liu, Zhepeng Cen, Jiacheng Zhu, Wenhao Yu, Tingnan Zhang, and Ding Zhao.
+  Constraint-conditioned policy optimization for versatile safe reinforcement learning. Advances in Neu-
+  ral Information Processing Systems, 36, 2024.
+Peng Zhai, Xiaoyi Wei, Taixian Hou, Xiaopeng Ji, Zhiyan Dong, Jiafu Yi, and Lihua Zhang. Robust proximal
+  adversarial reinforcement learning under model mismatch. IEEE Robotics and Automation Letters, 2024.
+Kaiqing Zhang, Tao Sun, Yunzhe Tao, Sahika Genc, Sunil Mallya, and Tamer Basar. Robust multi-agent
+ reinforcement learning with model uncertainty. Advances in neural information processing systems, 33:
+ 10571–10583, 2020.
+Zhengfei Zhang, Kishan Panaganti, Laixi Shi, Yanan Sui, Adam Wierman, and Yisong Yue. Distributionally
+  robust constrained reinforcement learning under strong duality. Reinforcement Learning Journal, 4:1793–
+  1821, 2024.
+
+
+                                                    21
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Ruida Zhou, Tao Liu, Min Cheng, Dileep Kalathil, PR Kumar, and Chao Tian. Natural actor-critic for
+  robust reinforcement learning with function approximation. Advances in neural information processing
+  systems, 36, 2024.
+
+
+
+A     Further Discussions on Related Work
+
+In this section, we include further discussions on existing literature include other closely related areas and
+clarification of existing results on the strong duality of robust constrained RL problems.
+
+A.1   Other Related Work
+
+In this section, we further explore the two closely related areas: robust RL and constrained RL.
+
+Robust RL Robust reinforcement learning (RL) aims to develop policies that perform well under the
+worst-case transitions. Early works on robust RL primarily focused on model-based approaches, where the
+uncertainty set of transition probabilities is known or can be estimated, and robust policies are computed
+using robust dynamic programming techniques (Bagnell et al., 2001; Iyengar, 2005; Nilim & Ghaoui, 2005;
+Satia & Lave Jr., 1973; Wiesemann et al., 2013; Lim & Xu, 2013). These methods consider worst-case
+scenarios over the uncertainty set to ensure robustness. In the model-free setting, robust RL algorithms
+have been proposed that do not require explicit knowledge of the uncertainty set but instead utilize samples
+to estimate robust value functions and policies (Roy et al., 2017; Wang & Zou, 2021; Panaganti & Kalathil,
+2022). These methods often involve solving a robust optimization problem over the estimated uncertainties.
+Recent theoretical advancements overcome the issues of directly solving the worst-case transitions. Wang &
+Zou (2022) considers the R-contamination model to obtain the unbiased estimator for the policy gradient
+method. Zhou et al. (2024) applies the double sampling method or the structure of the IPM uncertainty
+structure to obtain the unbiased estimation involving the worst-case transition probability. And Kumar
+et al. (2023) provides the analytical solution for the p-norm uncertainty set. These advancements allow us
+to directly obtain the robust policy gradient or the robut value function without estimating the worst-case
+transition probability.
+
+Constrained RL Constrained reinforcement learning extends the standard RL framework by incorporat-
+ing constraints into the agent’s decision-making process, aiming to optimize performance while satisfying
+certain safety, resource, or risk constraints (Altman, 1999). A widely used approach for solving constrained
+RL problems is the primal-dual method (Paternain et al., 2019; Tessler et al., 2019; Liang et al., 2018; Stooke
+et al., 2020), which leverages the strong duality property of constrained RL (Altman, 1999) to formulate a
+Lagrangian that combines the objective function with the weighted constraints. These methods iteratively
+update the policy and the Lagrange multipliers, and convergence guarantees have been established under
+certain conditions (Ding et al., 2020; Liu et al., 2021). However, these methods rely on the assumption of
+strong duality, which may not hold in more complex settings. Alternative methods, known as primal meth-
+ods, enforce constraints directly by projecting policies onto the feasible set or using safe policy improvement
+techniques (Achiam et al., 2017; Chow et al., 2018b; Dalal et al., 2018b; Xu et al., 2021; Yang & Zhang,
+2020). These methods aim to ensure constraint satisfaction without relying on dual variables.
+
+A.2   Strong Duality in Robust Constrained RL Problems
+
+In this section, we provide more detailed discussions in the existing literature discussing the strong duality
+in robust constrained RL problems.
+In the existing literature, Ghosh (2024) provide an intuitive explanation for why existing primal-dual methods
+for non-robust constrained RL problems could fail in robust case: In the standard routine of showing the
+strong duality (Paternain et al., 2019; Altman, 1999), the state visitation distribution dπ,P is convex in the
+                                                                                      ′
+policy π; that is, there always exists a policy π ′ such that (1 − α)dπ,P + αdπ,P = dπ ,P . However, this relation
+obviously does not hold, which makes the strong duality of robust constrained RL problems unclear. Our
+
+
+                                                       22
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+counterexample offers a theoretical justification of this conjecture by providing a concrete example where
+the duality gap is strictly positive.
+Additionally, Zhang et al. (2024) has proved the strong duality for robust constrained RL problems by
+employing the “randomization trick" that modifies the optimization problem’s policy space. However, their
+results do not apply to our setting. Specifically, it doesn’t consider the space of all random policies; instead,
+it only considers the distribution of deterministic policies. The choice of deterministic policy is made at
+the beginning of each round. This approach redefines the robust constrained RL problem to ensure strong
+duality, differing from the classical definition used in constrained RL (Altman, 1999; Paternain et al., 2019).
+Our work, instead, aims to align with this classical definition, highlighting that without such extensions,
+strong duality may not hold.
+As the result, existing literature has not addressed the critical question in the robust constrained RL prob-
+lems, which is what we aim to solve in this paper.
+
+B     Counterexample: Robust Constrained RL with Non-Zero Duality Gap
+
+Proof. We divide the proof into three parts: (1) The construction of counterexample constrained robust
+MDP. (2) The evaluation of Lagrangian function. (3) The evaluation of the duality gap.
+
+1. Construction of the constrained robust MDP:
+    We consider the constrained robust MDP described in Figure 6 (which is the same as Figure 1). The
+    nominal transition probability is explicitly defined as follows:
+
+                                               P (s0 | a0 , s0 ) = 1,
+                                               P (s1 | a0 , s0 ) = 0,
+                                               P (s0 | a1 , s0 ) = p,
+                                               P (s1 | a1 , s0 ) = 1 − p,
+                                               P (s0 | a0 , s1 ) = 1,
+                                               P (s1 | a0 , s1 ) = 0,
+                                               P (s0 | a1 , s1 ) = 1,
+                                               P (s1 | a1 , s1 ) = 0.
+
+    Then we obtain the state transition probability induced by the policy π:
+
+                                                     π0 + π 1 p 1
+                                                                 
+                                            Pπ =                    ,
+                                                     π1 (1 − p) 0
+
+    where π0 := π(a0 |s0 ) and π1 := π(a1 |s0 ). The action at the state s1 doesn’t make any differences. The
+    (i, j)-th entry of P π represents the probability of moving from sj to siby following the policy π. We fix
+                                                                              1
+    the initial state to s0 . Its corresponding distribution is given by µ0 =     . The reward for the objective
+                                                                            0
+                                1                                           0
+                               
+    value function is r0 =         . The reward for the constraint is r1 =    . Here, we only consider a single
+                                0                                           1
+    constraint.
+    Lastly, we consider the following (s, a)-uncertainty set defined by the L∞ distance:
+
+                                    Vs,a := {0}, for (s, a) ̸= (s0 , a1 )
+                                  Vs0 ,a1 := {v ∈ R|S| | ⟨v, 1|S| ⟩ = 0, ∥v∥∞ ≤ β},
+                                    Us,a := Vs,a + P.
+
+    Given this uncertainty set, the value of p varies from p − δ to p + δ. Here, we further assume that p is
+    strictly less than 1, δ < p, and p + δ < 1. We denote p := p + δ and p := p − δ.
+
+
+                                                         23
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+     (a) Transition when taking the action a0 .                         (b) Transition when taking the action a1 .
+
+
+
+
+Figure 6: The transition diagram of the MDP considered in Theorem 3.1. At state s1 , the agent always
+moves to state s0 with probability 1, regardless of the action taken. At state s0 , the agent has a probability
+p of staying in the current state when taking action a1 , and a probability of 1 of staying in state s0 when
+taking action a0 . The uncertainty only occurs in the transition probability p; we let it vary from [p, p].
+
+
+2. Evaluate the Lagrangian function:
+   Now we evaluate the discounted visitation measure of the policy π. Define      the discounted visitation
+                                                        1 − γ(π0 + π1 p) −γ
+                                                                             
+   measure as d := (I − γP ) µ0 . Because I − γP =
+                          π −1                    π
+                                                                               , where µ0 is the initial state
+                                                          −γπ1 (1 − p)     1
+   distribution. Then we obtain
+                        1           1                            1         1            1
+                                                                                          
+                                                    γ
+                d=                                                  =                            .
+                   |I − γP π | γπ1 (1 − p) 1 − γ + γπ1 (1 − p) 0       |I − γP π | γπ1 (1 − p)
+
+   Here, | · | represent the determinant. And we choose γ to ensure ∥γP π ∥2 < 1.
+   Given the discounted visitation measure, we immediately obtain the non-robust value function of each
+   reward by using V π (µ0 ) = r⊤ d:
+                                                                1
+                                       V0π (µ0 ) =                              ,
+                                                   1 − γ + π1 (1 − p)(γ − γ 2 )
+                                                          γπ1 (1 − p)
+                                       V1π (µ0 ) =                              .
+                                                   1 − γ + π1 (1 − p)(γ − γ 2 )
+
+   From our definition of the uncertainty set, we have p ∈ [p, p]. Then the robust value function of each
+   reward is:
+                                                                           1
+                               Ve0π (µ0 ) = min V0π (µ0 ) =                                ,
+                                            p                 1 − γ + π1 (1 − p)(γ − γ 2 )
+                                                                     γπ1 (1 − p)
+                               Ve1π (µ0 ) = min V1π (µ0 ) =                                .
+                                            p                 1 − γ + π1 (1 − p)(γ − γ 2 )
+
+   Therefore, the Lagrangian function is given by
+
+                  L(π, λ) = Ve0π − λ(ρ − Ve1π )
+                                          1                            γπ1 (1 − p)
+                                                                                            
+                           =                              −λ ρ−                                .
+                             1 − γ + π1 (1 − p)(γ − γ 2 )       1 − γ + π1 (1 − p)(γ − γ 2 )
+
+3. Evaluate the duality gap:
+   It suffices to evaluate both minλ maxπ L(π, λ) and maxπ minλ L(π, λ).
+
+
+                                                         24
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+  • Solve minλ maxπ L(π, λ):
+    We will solve ∂L
+                  ∂π ≥ 0 to find monotone intervals of the function L(·, λ) : π 7→ L(π, λ). Then we will
+    obtain when L(·, λ) : π 7→ L(π, λ) achieves its maxima.
+                  ∂L         −(1 − p)(γ − γ 2 )
+                     =                             2
+                  ∂π    1 − γ + π1 (1 − p)(γ − γ 2 )
+                          γ(1 − p) 1 − γ + π1 (1 − p)(γ − γ 2 ) − γπ1 (1 − p) (1 − p)(γ − γ 2 )
+                                                                                            
+                      +λ                                                      2
+                                                [1 − γ + π1 (1 − p)(γ − γ 2 )]
+                             −(1 − p)(γ − γ 2 )                    (1 − p)(γ − γ 2 )
+                     =                             2 + λ                               2.
+                        1 − γ + π1 (1 − p)(γ − γ 2 )       [1 − γ + π1 (1 − p)(γ − γ 2 )]
+
+     Let ∂L
+         ∂π ≥ 0. We obtain
+
+                                                   1−p                1−p
+                                       λ                   2 ≥                 2
+                                         [1 + π1 (1 − p)γ]      1 + π1 (1 − p)γ
+                                         1−p                   2                   2
+                               =⇒      λ        1 + π1 (1 − p)γ ≥ [1 + π1 (1 − p)γ]
+                                         1−p
+                                       s
+                                            1−p
+                               =⇒                  1 + π1 (1 − p)γ ≥ [1 + π1 (1 − p)γ] .
+                                                                   
+                                          λ
+                                            1−p
+
+     Then we obtain             s                   "                 s      #
+                                      1−p                                1−p
+                                    λ     − 1 ≥ π1 γ (1 − p) − (1 − p) λ       .
+                                      1−p                                1−p
+
+     It is easy to notice that when λ ≤ 1−p
+                                        1−p , the coefficient of π1
+                                           "                   s       #
+                                                                   1−p
+                                               (1 − p) − (1 − p) λ       ≥ 0.
+                                                                   1−p
+
+     When λ ≥ 1−p
+              1−p
+                  , the coefficient of π1
+                                           "                   s       #
+                                                                   1−p
+                                               (1 − p) − (1 − p) λ       ≤ 0.
+                                                                   1−p
+
+     We separately consider each case to solve the monotone intervals.
+                                                         q
+     ◦ Case 1: λ ≤ 1−p
+                    1−p
+                        . In this case, (1 − p) − (1 − p) λ 1−p
+                                                            1−p
+                                                                ≥ 0. It solves:
+                                                          hq       i
+                                                         λ 1−p
+                                                           1−p − 1
+                                           π1 ≤ h                 q      i.
+                                               γ (1 − p) − (1 − p) λ 1−p
+                                                                     1−p
+
+        We further consider if this upper bound
+                                           hq is positive
+                                                      i or negative.
+                         1−p
+        ▷ Case 1.1: λ ≥ 1−p . In this case,      1−p − 1 ≥ 0. It violates λ ≤ 1−p .
+                                               λ 1−p                          1−p
+
+                        1−p
+                                            hq          i
+        ▷ Case 1.2: λ ≤ 1−p . In this case,      1−p − 1 ≤ 0.
+                                               λ 1−p
+        Therefore, in the Case 1 (λ ≤ 1−p
+                                      1−p ), we always have π1 ≤ 0. It indicates that L(π, λ) is decreasing
+        in π1 when π1 ∈ [0, 1]. The maximum is achieved when setting π1 = 0. That is,
+                                                                      1
+                                           max L(π, λ) = L(0, λ) =       − λρ,
+                                               π                     1−γ
+        where 0 ≤ λ ≤ 1−p
+                      1−p
+                          .
+
+
+                                                         25
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+                                                        q
+     ◦ Case 2: λ ≥ 1−p
+                   1−p . In this case, (1 − p) − (1 − p)    1−p
+                                                          λ 1−p ≤ 0. It solves:
+                                                          hq     i
+                                                       λ 1−p
+                                                         1−p − 1
+                                         π1 ≥ h                 q      i.
+                                             γ (1 − p) − (1 − p) λ 1−p
+                                                                   1−p
+
+        Again, we further consider if this lower
+                                             hq bound isipositive or negative:
+                          1−p
+        ▷ Case 2.1: λ ≥ 1−p . In this case,         1−p − 1 ≥ 0. It indicates that L(π, λ) is increasing in π1
+                                                  λ 1−p
+          when π1 ∈ [0, 1]. The maximum is achieved
+                                                hq at x1 = i1.
+                                1−p
+                    1−p ≤ λ ≤ 1−p . In this case,
+        ▷ Case 2.2: 1−p                              1−p − 1 ≤ 0. It indicates that L(π, λ) is decreasing
+                                                   λ 1−p
+          then increasing within π1 ∈ [0, 1]. The maximum is either achieved at x1 = 1 or x1 = 0. We need
+          to decide which one is larger: When x1 = 1, we have
+                                              1
+                                                                                             
+                                                                           γ(1 − p)
+                        L(1, λ) =                           −λ ρ−
+                                  1 − γ + (1 − p)(γ − γ 2 )         1 − γ + (1 − p)(γ − γ 2 )
+          or when x1 = 0,
+                                                                1
+                                                  L(0, λ) =        − λρ.
+                                                               1−γ
+          By letting L(1, λ) ≥ L(0, λ), we solve the boundary is
+                                                         1 − p 1 + (1 − p)γ
+                                                  λ̂ =                      .
+                                                         1 − p 1 + (1 − p)γ
+
+          It means if λ ≥ λ̂, then L(1, λ) ≥ L(0, λ). If λ ≤ λ̂, then L(1, λ) ≤ L(0, λ).
+        Combining both Case 2.1 and Case 2.2, we obtain
+                                                      (
+                                                        L(1, λ) λ ≥ λ̂
+                                      max L(π, λ) =                        1−p ,
+                                        π               L(0, λ) λ̂ ≥ λ ≥ 1−p
+
+                   1−p
+        where λ̂ = 1−p 1+(1−p)γ
+                       1+(1−p)γ .
+     Now, combining both Case 1 and Case 2, we have
+                                                (
+                                                  L(1, λ) λ ≥ λ̂
+                                  max L(π, λ) =                      ,
+                                    π             L(0, λ) λ̂ ≥ λ ≥ 0
+                 1−p
+     where λ̂ = 1−p 1+(1−p)γ
+                    1+(1−p)γ . When λ = λ̂, the function maxπ L(π, ·) : λ 7→ maxπ L(π, λ) achieves its
+     minimum. That is,
+                                                  1      1 − p 1 + (1 − p)γ
+                               min max L(π, λ) =       −                    ρ.
+                                λ   π            1−γ     1 − p 1 + (1 − p)γ
+  • Solve maxπ minλ L(π, λ):
+    We let the constraint be satisfied; that is
+                                                   γπ1 (1 − p)
+                                       ρ−                                ≤ 0.
+                                            1 − γ + π1 (1 − p)(γ − γ 2 )
+     Otherwise, simply letting λ = +∞ will lead to −∞ function value. It solves
+
+                                       ρ(1 − γ) ≤ [1 − ρ(1 − γ)]γ(1 − p)π1 .
+
+     Since ρ must be less than 1−γ
+                                1
+                                   (so, 1 − (1 − γ)ρ ≥ 0), we have
+
+                                                         ρ(1 − γ)
+                                           π1 ≥                          .
+                                                  [1 − ρ(1 − γ)]γ(1 − p)
+
+                                                         26
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+                                                      ρ(1−γ)
+      Therefore, the maximum is achieved at π1 = [1−ρ(1−γ)]γ(1−p) :
+
+                              max min L(π, λ) = max Ve0π
+                               π       λ                   π
+                                                                    1
+                                                      =
+                                                                   ρ(1−γ)2 1−p
+                                                          1 − γ + 1−ρ(1−γ) 1−p
+                                                                                 1−p
+                                                         1               ρ 1−p
+                                                      =     −                         1−p .
+                                                        1−γ   1 − ρ(1 − γ) + ρ(1 − γ)  1−p
+
+
+    Therefore, the duality gap is given by
+
+                           D(L) = max min L(π, λ) − min max L(π, λ)
+                                        π     λ                 λ   π
+                                                                                 1−p
+                                       1 − p 1 + (1 − p)γ               ρ 1−p
+                                   =                      ρ−                         1−p .
+                                       1 − p 1 + (1 − p)γ    1 − ρ(1 − γ) + ρ(1 − γ)   1−p
+
+
+When p = p, the duality gap turns to be exactly 0. It is because the constrained non-robust RL problem has
+zero duality gap. However, when we set p = γ = 0.5, p = 0.75, p = 0.25, and ρ = 1. We have the non-zero
+duality gap
+                                                          21
+                                               D(L) =        .
+                                                          22
+
+
+
+C     Proof of Theorem 4.5
+
+In this section, we provide the detailed proof of Theorem 4.5.
+
+C.1    Assumptions
+
+In this subsection, we recap the assumptions used in this proof. We additionally restrict all rewards to [0, 1];
+however, this restriction is not crucial. It only affects the constant upper bound of robust value (or Q)
+functions V π and Qπ . We can relax this assumption to a general [−rmax , rmax ] with changing the upper and
+lower bound of these value functions to be r1−γ
+                                             max
+                                                 .
+Assumption C.1 (Policy Evaluation Accuracy). The approximate robust value functions Q̂πi (s, a) satisfy
+|Q̂πi (s, a) − Qπi (s, a)| ≤ ϵapprox for all s ∈ S, a ∈ A, and i = 0, . . . , I.
+Assumption C.2 (Worst-Case Exploration). For any policy π and its worst-case transition P , there exists
+a positive constant pmin > 0 such that its state visitation probability satisfies dπ,P
+                                                                                    µ (s) ≥ pmin for all s ∈ S,
+where dµ is the state visitation distribution starting from initial distribution µ under policy π and transition
+        π,P
+
+P.
+Assumption C.3 (Bounded Rewards). For all rewards ri : S × A → R, it satisfies
+
+                                                      0 ≤ ri (s, a) ≤ 1
+
+for all (s, a) ∈ S × A.
+
+Assumption C.4. The diameter of the uncertainty set C is given as
+
+                                        sup sup dTV (P (·|s, a), P ′ (·|s, a)) ≤ c.
+                                       P,P ′ ∈C s,a
+
+
+
+
+                                                               27
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+C.2   Supporting Lemmas
+
+We summarize all required lemmas in this subsection. These lemmas will be used to prove the main result.
+The following performance difference lemma is originally developed by Zhou et al. (2024) for bounding the
+value function difference of two policies π ′ and π. Here we apply Theorem 4.2 to turn the upper and lower
+bound to transition this inequality to the desired distribution needed in our convergence analysis.
+Lemma C.5 (Robust performance difference lemma). Let π, π ′ be two policies and P, P ′ be their worst-case
+transition kernels. Suppose that µ is the initial distribution over the state space S. Then
+            1                                         ′                  1
+               E π′ ,P ′ Ea∼π′ (·|s) [Aπ (s, a)] ≤ V π (µ) − V π (µ) ≤      E π′ ,P Ea∼π′ (·|s) [Aπ (s, a)].        (11)
+          1 − γ s∼dµ                                                   1 − γ s∼dµ
+
+Proof. Equation (11) is given by Lemma 8 from Zhou et al. (2024).
+Remark C.6. Moreover, we have
+             ′                   1
+          V π (µ) − V π (µ) ≤        E π′ ,P Ea∼π′ (·|s) [Aπ (s, a)]
+                               1 − γ s∼dµ
+                                 1                                         1
+                             ≤       E π′ ,P Ea∼π′ (·|s) [Aπ (s, a)] −          E π′ ,P ′ Ea∼π′ (·|s) [Aπ (s, a)]
+                               1 − γ s∼dµ                                1 − γ s∼dµ
+                                   1
+                               +      E π′ ,P ′ Ea∼π′ (·|s) [Aπ (s, a)]
+                                 1 − γ s∼dµ
+                                 1                                            2            ′  ′     ′
+                             ≤       E π′ ,P ′ Ea∼π′ (·|s) [Aπ (s, a)] +           dTV (dπµ ,P , dπµ ,P )
+                               1 − γ s∼dµ                                 (1 − γ)2
+
+Lemma C.7. Let the NPG update rule be given by
+
+                                                     exp η Q̂πt (s, a)/(1 − γ)
+                                                                              
+                               πt+1 (a|s) = πt (a|s)                            ,
+                                                                 Zt
+
+where the normalization factor Zt := a∈A πt (a|s) exp η Q̂t (s, a)/(1 − γ) . Then
+                                      P                                      
+
+                                                         1−γ        πt+1 (a|s)
+                                         Q̂πt (s, a) =       log Zt            .
+                                                          η          πt (a|s)
+
+Proof. See Lemma 4 from Xu et al. (2021).
+
+The following lemma tells how much the worst-case value function of a given reward ri is im-
+proved by updating πt to πt+1 using its corresponding robust policy gradient.                     The first term
+       πt+1 ,P ′ [dKL (πt+1 (·|s)∥πt (·|s))] is always non-negative. The second term ∆t will be merged with other
+1
+  E
+η s∼dν
+errors later.
+Lemma C.8. Under the NPG update rule with learning rate η, the robust value functions with an arbitrary
+initial distribution ν satisfy the following inequality:
+
+                         π                          1
+                       Vit t+1 (ν) − Viπt t (ν) ≥     E π ,P ′ [dKL (πt+1 (·|s)∥πt (·|s))] + ∆t ,
+                                                    η s∼dν t+1
+
+where the worst-case transition probability of the policy πt and πt+1 are P and P ′ , respectively, and the error
+term ∆t is given by
+                   1               X                                                            
+          ∆t :=        E πt+1 ,P ′       [πt (a | s) − πt+1 (a | s)] Qπitt (s, a) − Q̂πitt (s, a)
+                1 − γ s∼dν
+                                   a∈A
+                  (1 − γ)                                            X                                          
+               +          Es∼ν [log Zt ] − Es∼ν [Viπt t (s)] − Es∼ν       πt (a | s) Q̂πitt (s, a) − Qπitt (s, a) .
+                     η
+                                                                      a∈A
+
+
+                                                             28
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Proof. Let the worst-case transition probability of the policy πt and πt+1 be P and P ′ , respectively. Their
+                                                             π    ,P ′
+corresponding visitation probabilities are dπν t ,P (s) and dν t+1 (s). Applying Theorem C.5 to the robust
+                                π
+value function Viπt t (ν) and Vit t+1 (ν), we obtain
+                  π                        1               X
+                Vit t+1 (ν) − Viπt t (ν) ≥     E πt+1 ,P ′     πt+1 (a | s)Aπitt (s, a)
+                                         1 − γ s∼dν
+                                                           a∈A
+                                           1               X
+                                       =       E πt+1 ,P ′     πt+1 (a | s)[Qπitt (s, a) − Viπt t (s)]
+                                         1−γ    s∼dν
+                                                           a∈A
+                                           1               X
+                                       =       E πt+1 ,P ′     πt+1 (a | s)[Q̂πitt (s, a)]
+                                         1 − γ s∼dν
+                                                           a∈A
+                                             1               X
+                                         +       E πt+1 ,P ′     πt+1 (a | s)[Qπitt (s, a) − Q̂πitt (s, a)]
+                                           1−γ    s∼dν
+                                                                       a∈A
+                                                 1
+                                             −      E π ,P ′ [Viπt t (s)].
+                                               1 − γ s∼dν t+1
+where the first equality applies the definition of the worst-case advantage function Aπ (s, a) := Qπ (s, a) −
+V π (s), and the second equality applies the decomposition of the Q-function with its approximation error.
+By the NPG update rule (Theorem C.7), we have
+                                                               1−γ        πt+1 (a|s)
+                                             Q̂πitt (s, a) =       log Zt            .
+                                                                η          πt (a|s)
+Then we obtain
+                                              1                                 1−γ           πt+1 (a|s)
+                                                                                                           
+                 π
+                                                             X
+               Vit t+1 (ν) − Viπt t (ν) ≥         E π ,P ′       πt+1 (a | s)          log Zt
+                                            1 − γ s∼dν t+1                       η              πt (a|s)
+                                                             a∈A
+                                                1              X
+                                            +      E π ,P ′        πt+1 (a | s)[Qπitt (s, a) − Q̂πitt (s, a)]
+                                              1 − γ s∼dν t+1
+                                                                       a∈A
+                                            1
+                                        −      E π ,P ′ [Viπt t (s)]
+                                          1 − γ s∼dν t+1
+                                        1                                              πt+1 (a|s)
+                                                     X                                             
+                                       = E πt+1 ,P ′     πt+1 (a | s) log Zt + log
+                                        η s∼dν                                          πt (a|s)
+                                                     a∈A
+                                            1              X
+                                        +      E π ,P ′         πt+1 (a | s)[Qπitt (s, a) − Q̂πitt (s, a)]
+                                          1 − γ s∼dν t+1
+                                                                       a∈A
+                                               1
+                                          −       E π ,P ′ [Viπt t (s)]
+                                             1 − γ s∼dν t+1
+                                       (i) 1                                         1
+                                       = E πt+1 ,P ′ dKL (πt+1 (·|s)∥πt (·|s)) + E πt+1 ,P ′ log Zt
+                                           η s∼dν                                    η s∼dν
+                                               1              X
+                                          +       E πt+1 ,P ′      πt+1 (a | s)[Qπitt (s, a) − Q̂πitt (s, a)]
+                                             1−γ   s∼d ν
+                                                                       a∈A
+                                                1
+                                            −      E π ,P ′ [Viπt t (s)].
+                                              1 − γ s∼dν t+1
+                                                                                                            h                i
+                                                                                                                  πt+1 (a|s)
+where (i) applies the definition of KL-divergence dKL (πt+1 (·|s)∥πt (·|s)) =                       (a        log  πt (a|s) .
+                                                                                         P
+                                                                                          a∈A π t+1    | s)
+
+By the definition of Zt , we have
+1                            1             X                                       
+  E πt+1 ,P ′ log Zt (s) = E πt+1 ,P ′ log      πt (a|s) exp η Q̂πitt (s, a)/(1 − γ)
+η s∼dµ                       η s∼dµ
+                                           a∈A
+                         (i) 1          X                                           
+                         ≥ E πt+1 ,P ′      πt (a|s) log exp η Q̂πitt (s, a)/(1 − γ)
+                             η s∼dµ
+                                               a∈A
+
+
+                                                                  29
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+                                        1               X                        
+                                  =         E πt+1 ,P ′     πt (a|s) Q̂πitt (s, a)
+                                      1 − γ s∼dµ
+                                                        a∈A
+                                        1               X                                                      
+                                  =         E πt+1 ,P ′     πt (a|s) Q̂πitt (s, a) − Qπitt (s, a) + Qπitt (s, a)
+                                      1 − γ s∼dµ
+                                                        a∈A
+                                  (ii)   1               X                                               1
+                                   =         E πt+1 ,P ′     πt (a|s) Q̂πitt (s, a) − Qπitt (s, a) +           E π ,P ′ Viπt t (s, a),
+                                       1 − γ s∼dµ                                                      1 − γ s∼dµt+1
+                                                          a∈A
+                                                                                                                                   (12)
+
+where (i) applies the Jensen’s inequality, and (ii) applies the relation between Q-function and value function
+(Proposition 2.2. from Li et al. (2022)). As the result, we obtain
+             π
+         Vit t+1 (ν) − Viπt t (ν)
+          1                                             1                          1
+        ≥ E πt+1 ,P ′ dKL (πt+1 (·|s)∥πt (·|s)) + E πt+1 ,P ′ log Zt −                E π ,P ′ [Viπt t (s)]
+          η s∼dν                                        η s∼dν                   1 − γ s∼dν t+1
+                1                 X                                        
+         −          E πt+1 ,P ′       πt (a|s) Q̂πitt (s, a) − Qπitt (s, a)
+             1 − γ s∼dµ
+                                  a∈A
+                1                 X                                        
+         +          E πt+1 ,P ′       πt (a|s) Q̂πitt (s, a) − Qπitt (s, a)
+             1 − γ s∼dµ
+                                  a∈A
+                1                 X
+         +          E πt+1 ,P ′       πt+1 (a | s)[Qπitt (s, a) − Q̂πitt (s, a)]
+             1−γ     s∼d ν
+                                         a∈A
+        (i) 1                                                   1                 X
+        ≥        E   π     ,P ′   dKL (πt+1 (·|s)∥πt (·|s)) +      E πt+1 ,P ′        πt+1 (a | s)[Qπitt (s, a) − Q̂πitt (s, a)]
+            η     s∼dν t+1                                   1 − γ s∼dν
+                                                                                  a∈A
+                   1                     X                                     
+            +         E        πt+1 ,P ′   πt (a|s) Q̂πitt (s, a) − Qπitt (s, a)
+                 1 − γ s∼dµ
+                                         a∈A
+              1(1 − γ)                                        X                                     
+            +          Es∼ν log Zt − Es∼ν [Viπt t (s)] − Es∼ν   πt (a|s) Q̂πitt (s, a) − Qπitt (s, a) .
+                  η
+                                                                          a∈A
+
+                                                                          π     ,P ′
+where (i) we apply the change of measure to replace dν t+1                             with ν: (1) log Zt (s) + 1−γ
+                                                                                                                 η
+                                                                                                                          a∈A πt+1 (a |
+                                                                                                                       P
+                                                                                              t+1     π   ,P ′
+s)[Qπitt (s, a) − Q̂πitt (s, a)] − 1−γ
+                                    η
+                                       [Viπt t (s)] ≥ 0 for all s by Equation (12), and (2) dν ν                 (s) ≥ 1 − γ.
+Therefore, we conclude that
+             π
+         Vit t+1 (ν) − Viπt t (ν)
+          1                                              1               X
+        ≥ E πt+1 ,P ′ dKL (πt+1 (·|s)∥πt (·|s)) +           E πt+1 ,P ′      πt+1 (a | s)[Qπitt (s, a) − Q̂πitt (s, a)]
+          η s∼dν                                      1 − γ s∼dν
+                                                                         a∈A
+                1                 X                                   
+         +          E π ,P ′          πt (a|s) Q̂it (s, a) − Qit (s, a)
+                                                  πt          πt
+             1 − γ s∼dµt+1
+                                  a∈A
+             (1 − γ)                                          X                                       
+         +            Es∼ν log Zt − Es∼ν [Viπt t (s)] − Es∼ν      πt (a|s) Q̂πitt (s, a) − Qπitt (s, a) .
+                 η
+                                                                       a∈A
+
+It completes the proof.
+
+The following lemma is the main bound that we will deal with.
+Lemma C.9. Under the NPG update rule with learning rate η, the robust value functions satisfy the following
+inequality:
+             ∗             π              1
+         Viπt (µ) − Vit t+1 (µ) ≤           (Es∼ν ∗ DKL (π ∗ (·|s)∥πt (·|s)) − Es∼ν ∗ DKL (π ∗ (·|s)∥πt+1 (·|s)))
+                                          η
+
+                                                                     30
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+                                           1           X
+                                       +       Es∼ν ∗       π ∗ (a | s)[Qπitt (s, a) − Q̂πitt (s, a)]
+                                         1−γ
+                                                      a∈A
+                                                 "
+                                            1       π                              1
+                                       +          Vit t+1 (ν ∗ ) − Viπt t (ν ∗ ) − E πt+1 ,P ′ DKL (πt+1 (·|s)∥πt (·|s))
+                                         (1 − γ)                                   η s∼dν ∗
+                                           1                  X
+                                       −       E πt+1 ,P ′         πt+1 (a | s)[Qπitt (s, a) − Q̂πitt (s, a)]
+                                         1 − γ s∼dν ∗
+                                                             a∈A
+                                                                                                           #
+                                           1                  X                                         
+                                       −       E π ,P ′            πt (a|s) Q̂it (s, a) − Qit (s, a) +ψt ,
+                                                                                  πt             πt
+                                         1 − γ s∼dµt+1
+                                                                a∈A
+
+where the worst-case transition probability of the worst-case optimal policy π ∗ and πt+1 are P ∗ and P ′ ,
+                                                                     ∗  ∗
+respectively, and the visitation probability of π ∗ is ν ∗ (s) := dπµ ,P (s).
+
+Proof. Let the worst-case transition probability of the worst-case optimal policy π ∗ be P ∗ and the visitation
+probability of π ∗ be
+                                                           ∗  ∗
+                                             ν ∗ (s) := dπµ ,P (s).
+Define
+                            1                                          1
+                  ψt :=        E π∗ ,Pt Ea∼π∗ (·|s) [Aπitt (s, a)] −      E π∗ ,P ∗ Ea∼π∗ (·|s) [Aπitt (s, a)],              (13)
+                          1 − γ s∼dµ                                 1 − γ s∼dµ
+
+where Pt denotes the worst-case transition probability of πt .
+                                                                        ∗
+Applying Theorem C.5 to the robust value function Viπt and Viπt t (i = 0, 1, . . . , I), we obtain
+
+     ∗                     1         X
+ Viπt (µ) − Viπt t (µ) ≤      Es∼ν ∗     π ∗ (a | s)Aπitt (s, a)+ψt
+                          1−γ
+                                     a∈A
+                           1         X
+                        =     Es∼ν ∗     π ∗ (a | s)[Qπitt (s, a) − Viπt t (s)]+ψt
+                          1−γ
+                                     a∈A
+                           1         X                                   1           X
+                        =     Es∼ν ∗     π ∗ (a | s)[Q̂πitt (s, a)] +         Es∼ν ∗   π ∗ (a | s)[Qπitt (s, a) − Q̂πitt (s, a)]
+                          1−γ                                         1−γ
+                                            a∈A                                           a∈A
+                              1
+                           −     Es∼ν ∗ [Viπt t (s)]+ψt .
+                             1−γ
+
+where the first equality applies the definition of the worst-case advantage function Aπ (s, a) := Qπ (s, a) −
+V π (s), and the second equality applies the decomposition of the Q-function with its approximation error.
+By the NPG update rule (Theorem C.7), we have
+
+                                                1−γ           πt+1 (a|s)
+                                                                        
+                                   Q̂ (s, a) =
+                                     πt
+                                                      log Zt               .
+                                                  η            πt (a|s)
+
+Then we obtain
+                                     1                            1−γ              πt+1 (a|s)
+                                                                                               
+            ∗                                   X
+         Viπt (µ) − Viπt t (µ) ≤         Es∼ν ∗     π ∗ (a | s)           log Zt
+                                   1−γ                              η                 πt (a|s)
+                                                a∈A
+                                       1          X
+                                   +       Es∼ν ∗      π ∗ (a | s)[Qπitt (s, a) − Q̂πitt (s, a)]
+                                     1−γ
+                                                    a∈A
+                                 1
+                              −      Es∼ν ∗ [Viπt t (s)]+ψt
+                                1−γ
+                                     "                                           #
+                              1                     X                 πt+1 (a|s)
+                             = Es∼ν ∗ log Zt +          π (a | s) log
+                                                         ∗
+                              η                                        πt (a|s)
+                                                          a∈A
+
+
+                                                                   31
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+                                    1         X
+                               +       Es∼ν ∗   π ∗ (a | s)[Qπitt (s, a) − Q̂πitt (s, a)]
+                                   1−γ
+                                                 a∈A
+                                    1
+                                −      Es∼ν ∗ [Viπt t (s)]+ψt
+                                   1−γ
+                             (i) 1
+                             = Es∼ν ∗ [log Zt + dKL (π ∗ (·|s)∥πt (·|s)) − dKL (π ∗ (·|s)∥πt+1 (·|s))]
+                                 η
+                                    1          X                                                   1
+                                +      Es∼ν ∗         π ∗ (a | s)[Qπitt (s, a) − Q̂πitt (s, a)] −     Es∼ν ∗ [Viπt t (s)]+ψt
+                                   1−γ                                                            1−γ
+                                                 a∈A
+                              1               1
+                             = Es∼ν ∗ log Zt + Es∼ν ∗ [dKL (π ∗ (·|s)∥πt (·|s)) − dKL (π ∗ (·|s)∥πt+1 (·|s))]
+                              η               η
+                                 1           X                                               1
+                              +       Es∼ν ∗    π ∗ (a | s)[Qπitt (s, a) − Q̂πitt (s, a)] −     Es∼ν ∗ [Viπt t (s)]+ψt
+                                1−γ                                                         1−γ
+                                                 a∈A
+
+where (i) applies the definition of KL-divergence. By Theorem C.8, we have
+               (1 − γ)                                              X                                     
+                       Es∼ν ∗ log Zt − Es∼ν ∗ [Viπt t (s)] − Es∼ν ∗   πt (a|s) Q̂πitt (s, a) − Qπitt (s, a)
+                   η
+                                                                         a∈A
+                   π                             1
+                ≤Vit t+1 (ν ∗ ) − Viπt t (ν ∗ ) − E πt+1 ,P ′ dKL (πt+1 (·|s)∥πt (·|s))
+                                        η       ν∗
+                                                   s∼d
+                      1              X
+                  −      E π ,P ′        πt+1 (a | s)[Qπitt (s, a) − Q̂πitt (s, a)]
+                    1 − γ s∼dν ∗t+1
+                                     a∈A
+                      1              X                                        
+                  −      E πt+1 ,P ′     πt (a|s) Q̂πitt (s, a) − Qπitt (s, a)
+                    1 − γ s∼dµ
+                                          a∈A
+
+Then we obtain
+            ∗           π           1
+         Viπt (µ) − Vit t+1 (µ) ≤     (Es∼ν ∗ DKL (π ∗ (·|s)∥πt (·|s)) − Es∼ν ∗ DKL (π ∗ (·|s)∥πt+1 (·|s)))
+                                    η
+                                        1           X
+                                    +       Es∼ν ∗       π ∗ (a | s)[Qπitt (s, a) − Q̂πitt (s, a)]
+                                      1−γ
+                                                    a∈A
+                                              "
+                                         1        π                            1
+                                    +           V t+1 (ν ∗ ) − Viπt t (ν ∗ ) − E πt+1 ,P ′ DKL (πt+1 (·|s)∥πt (·|s))
+                                      (1 − γ) it                               η s∼dν ∗
+                                        1                 X
+                                    −       E πt+1 ,P ′         πt+1 (a | s)[Qπitt (s, a) − Q̂πitt (s, a)]
+                                      1−γ     s∼dν∗
+                                                          a∈A
+                                                                                                        #
+                                        1                 X                                          
+                                    −       E π ,P ′            πt (a|s) Q̂πitt (s, a) − Qπitt (s, a) +ψt
+                                      1 − γ s∼dµt+1
+                                                            a∈A
+
+which is the final upper bound after applying the last inequality. Then we omit the term containing
+−DKL (πt+1 (·|s)∥πt (·|s)) since it is always non-positive.
+
+The following lemma gives the condition such that N0 is non-empty.
+Lemma C.10. Consider the NPG update rule with learning rate η and let δ > 0 be chosen such that
+                       1                                  ηL                    2ℓ
+                  δ > Es∼ν ∗ DKL π ∗ (·|s)∥π1 (·|s) +           + ϵ̄approx +
+                                                   
+                                                                                      c,
+                      T                                (1 − γ)2              (1 − γ)2
+where ϵ̄approx is an error term depending on the approximation error terms, ℓ is the Lipschitz constant of
+                                   ν , and L is the Lipschitz constant of the robust value function Vi (ν ), c
+                                                                                                      π ∗
+the state visitation distribution dπ,P
+is the diameter of the uncertainty set given by Theorem C.4. Under these conditions,
+                                                       ∗
+                                     N0 := {t : Viπ (µ) − Viπt (µ) ≥ di − δ for all i}
+is always non-empty.
+
+
+                                                                32
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Proof. When t ∈ Ni := {t : Viπt is sampled to update}, we have it = i and by the algorithm design,
+                                  ∗            π             ∗                     π              π
+                              Viπ (µ) − Vi t+1 (µ) ≥ Viπ (µ) − di + δ + V̂i t+1 (µ) − Vi t+1 (µ)
+                                                         h                       i
+                                                            π            π
+                                                   ≥ δ − V̂i t+1 (µ) − Vi t+1 (µ) .
+
+We sum the inequality obtained from Theorem C.9 over t = 1, 2, . . . , T . Since the robust value function
+V π (µ) is Lipschitz in π (Wang & Zou, 2021; Zhou et al., 2024), we have
+
+                                                                                           Lη
+                                       |V πt+1 (ν ∗ ) − V πt (ν ∗ )| ≤ L∥πt+1 − πt ∥ ≤        .
+                                                                                          1−γ
+
+Then we obtain
+                                                                                                            T
+          X        ∗        π
+                                                                                 η 2 LT                   X
+      η          Viπ (µ) − Vi t+1 (µ) + ηδT ≤ ηEs∼ν ∗ DKL (π ∗ (·|s)∥π1 (·|s)) +          + ηT ϵ̄approx +η     ψt ,
+                                                                                 (1 − γ)2                  t=1
+          i∈N0
+
+
+where ψt is given by Equation (13) and ϵ̄approx is a constant upper bound (depending on Theorem 4.1) of
+Capprox which is defined as
+
+                    1           X
+  Capprox :=             Es∼ν ∗     π ∗ (a | s)[Qπi t (s, a) − Q̂πi t (s, a)]
+                  1−γ
+                                a∈A
+                            "
+                       1         h
+                                    π              π
+                                                             i        1                X
+                 +            − V̂i t+1 (µ) − Vi t+1 (µ) −                 E πt+1 ,P ′     πt+1 (a | s)[Qπi t (s, a) − Q̂πi t (s, a)]
+                   (1 − γ)                                        1 − γ s∼dν ∗
+                                                                                       a∈A
+                                                                                    #
+                      1                 X                                        
+                 −        E π ,P ′           πt (a|s) Q̂πi t (s, a) − Qπi t (s, a) .
+                   1 − γ s∼dµt+1
+                                         a∈A
+
+
+By appropriately choosing the policy evaluation algorithm (discussed in Section C.3), ϵ̄approx can be arbi-
+trarily small. If N0 = ∅, then
+
+                                                                                                  T
+                                                                        η 2 LT                   X
+                          ηδT ≤ ηE    s∼ν ∗   DKL (π (·|s)∥π1 (·|s)) +
+                                                     ∗
+                                                                                + ηT ϵ̄approx +η     ψt .
+                                                                       (1 − γ)2                  t=1
+
+
+We further take
+
+                            2            ′  ′     ′          2ℓ                                            2ℓ
+                 ψt ≤            dTV (dµπ ,P , dµπ ,P ) ≤          sup dTV (P ′ (·|s, a), P (·|s, a)) ≤          c,
+                        (1 − γ)2                          (1 − γ)2 s,a                                  (1 − γ)2
+
+where we apply the ℓ-Lipschitzness of the state visitation distribution (Lemma 5, Eq. (37), Chen & Huang
+(2024)). Then, we let
+
+                                 1                                      ηL                     2ℓ
+                            δ>     Es∼ν ∗ DKL (π ∗ (·|s)∥π1 (·|s)) +           + ϵ̄approx +          c.
+                                 T                                   (1 − γ) 2              (1 − γ)2
+
+This hyper-parameter setting ensures that N0 is non-empty.
+
+C.3       Robust Policy Evaluation
+
+In this section, we collect two important robust policy evaluation techniques to discuss how to use these
+methods to obtain the robust value function with sufficient accuracy. Though we use a simplified result in
+this subsection, these results have been extended to more general setting in original sources.
+
+
+                                                                   33
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+C.3.1   Option 1: The IPM Uncertainty Set
+
+Lemma C.11 (Theorem 3, Zhou et al. (2024)). Let the value function V π is parameterized by w ∈ R|S|
+with the linear feature ϕ ∈ R|S| . Then using the Robust Linear TD-Learning proposed by Zhou et al. (2024)
+with step sizes αk = Θ(1/k), the output satisfies E∥wK − w∗ ∥2 = O(
+                                                                  e 1 ).
+                                                                    K
+
+As shown by Li et al. (2022), the robust Q-function can be calculated using the robust value function learned
+by the robust TD-learning algorithm described above. That is,
+
+                                             Qπ (s, a) = r(s, a) + γ inf V π (s′ ).
+                                                                         P ∈P
+
+The second term inf P ∈P V π (s′ ) is given by Proposition 1 from Zhou et al. (2024). This result indicates that
+we can obtain the robust Q-function with the convergence rate √1K (for the L∞ -norm).
+
+C.3.2   Option 2: The p-Norm Uncertainty Set
+
+We consider the following uncertainty set:
+
+                                      V := {v ∈ R|S| | ⟨v, 1|S| ⟩ = 0, ∥v∥p ≤ β},
+                                      U := V + P0 .
+
+Let q satisfy 1q + p1 = 1. Then Oβ,p (·) : R|S| → R|S| is defined as:
+
+                                                    sign(V (s′ ) − ωq (V ))|V (s′ ) − ωq (V )|q−1
+                            Oβ,p (V )(s′ ) := β                                                   ,
+                                                                    κq (V )q−1
+
+where ωq (V ) := arg minω ∥V − ω1|S| ∥q and κq (V ) := minω ∥V − ω1|S| ∥q .
+Lemma C.12 (Theorem 4.2, Kumar et al. (2023)). If the uncertainty set is defined as the p-norm (s, a)-
+rectangular set, then the worst-case transition probability P+ (·|s, a) can be represented as
+
+                                             P+ (·|s, a) = P0 (·|s, a) − βOβ,p (V )
+
+where β is the radius of the uncertainty set and Oβ,p (V ) is the balanced robust value function (Kumar et al.,
+2023).
+
+Based on this result, we apply the following TD-learning update rule:
+                                                                                                        
+
+                      V (s) ← V (s) + α r(s, a) + γV (s′ ) − V (s) −γOβ,p (V )(s′ )V (s′ ) .                     (14)
+                                         |          {z            }
+                                                    stand. TD err. under P0
+
+
+Here Oβ,p (·) : R|S| → R|S| is an operator determined by the uncertainty set. It is easy to observe that this
+update rule is equivalent to the TD-learning over the worst-case transition probability:
+
+                     Es′ ∼P0 (s′ |s,a) [r(s, a) + γV( s′ )] − γ⟨Oβ,p (V π ), V ⟩
+                                    X                                   X
+                    =r(s, a) + γ         P0 (s′ |s, a)π(a|s)V (s′ ) − γ     Oβ,p (V π )(s′ )V (s′ )
+                                   s′ ,a                                      s′
+                                   X                                       X
+                    =r(s, a) + γ           P0 (s |s, a)π(a|s)V (s ) − γ
+                                                ′                    ′
+                                                                                   π(a|s)Oβ,p (V π )(s′ )V (s′ )
+                                   s′ ,a                                   s′ ,a
+                                   X
+                    =r(s, a) + γ           π(a|s)[P0 (s′ |s, a) − Oβ,p (V0π )(s′ )]V (s′ )
+                                   s′ ,a
+                   (i)             X
+                    =r(s, a) + γ           π(a|s)P+ (s′ |s, a)V (s′ )
+                                   s′ ,a
+
+                    =r(s, a) + γEs′ ∼P+ (s′ |s,a) V (s′ ),
+
+
+                                                                34
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Algorithm 3: Rectified Robust Policy Optimization
+input : initial policy parameters θ0 , empty set N0
+for t = 0, · · · , T − 1 do
+   Evaluate value functions under πt := πθt : Q̂πi t (s, a) ≈ Qπi t (s, a) for i = 0, 1, . . . , I ;
+   Sample state-action pairs (sj , aj ) from the nominal distribution ;
+   Compute value estimates Viπt for i = 0, . . . , I ;
+   if Viπt ≥ di − δ for all i = 0, 1, . . . , I then
+       // Threshold Updates
+       Add θt to set N0 and track the feasible policy achieving the largest value πout = πt ;
+       Update d0 : dt+1 0   ← V0πt ;
+   else if Viπt < di − δ for some i = 1, . . . , I, 0 then
+      // Constraint Rectification & Objective Rectification
+      Maximize Viπt using Equation (8);
+output: πout
+
+
+where (i) applies the remarkable result from Theorem 4.2, Kumar et al. (2023): the worst-case transition
+P+ is the rank-one perturbation of the nominal transition P0 . Therefore, by applying existing TD-learning
+convergence analysis (Brandfonbrener & Bruna, 2019; Asadi et al., 2024; Li et al., 2024), we obtain that the
+convergence rate is also √1K .
+
+C.4   A Compact Algorithm
+
+We also include a compact version of Algorithm 1 in Algorithm 3 which merges the constraint rectification
+and objective rectification together.
+
+C.5   The Proof of Main Theorem
+
+Here, we state the full version of Theorem 4.5.
+Theorem C.13. Consider the NPG update rule with learning rate η. Let the constraint violation tolerance
+δ > 0 be chosen to satisfy
+                          2                                   2ηL                     4ℓ
+                            Es∼ν ∗ DKL π ∗ (·|s)∥π1 (·|s) +          + 2ϵ̄approx +
+                                                         
+                    δ>                                                                      c,
+                          T                                 (1 − γ)2               (1 − γ)2
+
+where ℓ is the Lipschitz constant of the state visitation distribution dπ,P  ν , and L is the Lipschitz constant
+of the robust value function Viπ (ν ∗ ), ϵ̄approx is the error caused by the robust policy evaluation step. Under
+these conditions, the output policy πout satisfies:
+                                       2                                   2ηL                     4ℓ
+          E [V ∗ (µ) − V πout (µ)] ≤     Es∼ν ∗ DKL π ∗ (·|s)∥π1 (·|s) +          + 2ϵ̄approx +
+                                                                      
+                                                                                                         c,
+                                       T                                 (1 − γ)2               (1 − γ)2
+where the constraint violation of πout is guaranteed to be at most δ. Moreover, if setting
+                                                (1 − γ)2 ϵ     (1 − γ)2 ϵ
+                                                           ≤η≤            ,
+                                                   2L 4           2L 3
+                                                          2
+the robust policy evaluation error ϵapprox ≤ (1−γ)
+                                               12 ϵ, and the number of iteration step
+
+                                                2L 12
+                                       T ≥               Es∼ν ∗ DKL (π ∗ (·|s)∥π1 (·|s)),
+                                             (1 − γ)2 ϵ2
+then the output policy satisfies the ϵ-accuracy with a constant error; that is
+                                                                            4ℓ
+                                         E [V ∗ (µ) − V πout (µ)] ≤ ϵ+            c.
+                                                                         (1 − γ)2
+
+                                                              35
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+Proof. By the update rule, the boundary value d0 is non-decreasing. Since it is upper bounded, we conclude
+that {dt0 } converges and we denote
+                                                dt → d¯0
+                                                       0
+
+as t → ∞. More explicitly, we have
+
+                                          d¯0 = sup{V0πt : Viπt < di + δ}.
+
+There are only two cases for the output policy πout :
+(1) The policy is better than the optimal policy while the relaxed constraint is violated; i.e.
+                                                 ∗           π
+                                             Viπ (µ) − Vi t+1 (µ) ≤ 0.
+
+(2) The output policy is worse than the optimal policy but upper bounded by O( √1T ). When (1) holds,
+                                                        ∗            π
+then it is desired. When (1) doesn’t hold (i.e. Viπ (µ) − Vi t+1 (µ) > 0.), we assume |N0 | < T2 . It implies
+PI
+  i=1 |Ni | ≥ 2 . Then we have
+              T
+
+
+                                                                                   T
+                 1                                       η 2 LT                   X
+                   ηδT ≤ ηEs∼ν DKL (π (·|s)∥π1 (·|s)) +
+                              ∗
+                                     ∗
+                                                                 + ηT ϵ̄approx +η     ψt
+                 2                                      (1 − γ)2                  t=1
+                                                                  η 2 LT                       2ℓ
+                        ≤ ηEs∼ν ∗ DKL (π ∗ (·|s)∥π1 (·|s)) +              + ηT ϵ̄approx +ηT          c.          (15)
+                                                                 (1 − γ)2                   (1 − γ)2
+Here the last inequality applies the upper bound of ψt (see Theorem C.10 for the full derivation and the
+definition of ℓ). Then we let
+                           2                                     2ηL                     4ℓ
+                     δ>      Es∼ν ∗ DKL (π ∗ (·|s)∥π1 (·|s)) +          + 2ϵ̄approx +          c.
+                          ηT                                   (1 − γ)2               (1 − γ)2
+This hyper-parameter setting ensures that Equation (15) does not hold. Therefore, it leads to a contradiction.
+We obtain |N0 | ≥ T2 . In this case, we have
+
+        0 ≤ E [V ∗ (µ) − V πout (µ)] ≤ Eπ∼N0 [V ∗ (µ) − V π (µ)]
+                                        2                                     2ηL                     4ℓ
+                                     ≤    Es∼ν ∗ DKL (π ∗ (·|s)∥π1 (·|s)) +          + 2ϵ̄approx +          c.
+                                       ηT                                   (1 − γ)2               (1 − γ)2
+Here the non-negativity is because V ∗ (µ) is the largest-possible value function over the feasible policy. From
+the construction of N0 and the output policy πout , they are all feasible policies.
+We are interested in obtaining the complexity of the convergence up to a constant value function error
+(1−γ)2 c (typically, this term can be controlled by using a sufficiently small uncertainty set). To obtain the
+  4ℓ
+
+sample complexity, we set all three terms to be O(ϵ):
+
+• Let (1−γ)
+        2ηL
+            2 ≤ 3 . Then we obtain
+                ϵ
+
+
+                                                            (1 − γ)2 ϵ
+                                                     η≤                .
+                                                               2L 3
+
+• To make the last term 2ϵ̄approx ≤ 3ϵ , we set the robust policy evaluation error (Theorem 4.1) to be
+
+                                                 ∥Q̂ − Q∥∞ ≤ ϵapprox .
+
+   It leads to
+                                             "                                    #
+                        1               1                 1             1           ϵ
+                           ϵapprox +           ϵapprox +     ϵapprox +     ϵapprox ≤ .
+                       1−γ           (1 − γ)             1−γ           1−γ          3
+                            2
+   It solves ϵapprox ≤ (1−γ)
+                         12 ϵ.
+
+
+                                                            36
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+• Let ηT
+       2
+         Es∼ν ∗ DKL (π ∗ (·|s)∥π1 (·|s)) ≤ 3ϵ . We obtain
+                                          2                                 3
+                                    T ≥     Es∼ν ∗ DKL (π ∗ (·|s)∥π1 (·|s))
+                                         ηT                                 ϵ
+                                            2L 12
+                                       ≥             Es∼ν ∗ DKL (π ∗ (·|s)∥π1 (·|s)).
+                                         (1 − γ)2 ϵ2
+                                                                                                                 2
+    In the second step, we require the learning rate η is not too small; that is, we let it larger than (1−γ)
+                                                                                                          2L 3 .
+                                                                                                              ϵ
+
+    This result indicate that the iteration complexity is T = O(ϵ ), with choosing an appropriate learning
+                                                                   −2
+
+    rate η = Θ(ϵ) and the approximation error ϵapprox = O(ϵ).
+
+
+
+
+D     Experiment Setting
+
+This section outlines the information for replicating our experiments. Throughout our experiments, we
+include multiple independent runs and report the averaged metrics in our results. Specifically, we used three
+different random seeds.
+
+D.1    Hardware Specification and System Environment
+
+We conducted our experiments on a computing desktop running Windows 10 Education, equipped with
+3200MHz DDR4 DRAM memory, AMD Ryzen 7 3800X 8-Core, 16-Thread processor, and one NVIDIA
+GeForce RTX 2070 Super graphics cards. All experiments are executed using Python version 3.10.14.
+
+D.2    FrozenLake-Like Gridworld Experiment
+
+The reward function is defined as follows:
+                                                   
+                                                   +1
+                                                            if s′ is the target
+                                   r0 (s, a, s′ ) = −1       if s′ is a brown block
+                                                             otherwise
+                                                   
+                                                     −0.1
+                                                   
+
+and define r(s, a) := Es′ [r0 (s, a, s′ )]. The constraint reward function is defined as:
+                                                 
+                                                 −1 if s is out of the boundary
+                                                           ′
+
+                                 r1 (s, a, s′ ) = −1 if s′ is a brown block         .
+                                                   0    otherwise
+                                                 
+                                                 
+
+Here, we further define the cost function c(s, a) := −Es′ [r1 (s, a, s′ )] to better distinguish it with the rewards.
+In this experiment, we require the cost value function −V1π (µ) less than 0.2, which means that the agent
+should avoid hitting the brown block or move out of the box.
+We used a discount factor γ = 0.99. The learning rates for both algorithms are set to 0.0001 and the tolerance
+for constraint violations is δ = 0.01. The robustness of the environment was simulated by introducing a
+slipping probability p = 0.2 in the test environment, which differs from the deterministic dynamics used
+during training. For both methods, we run 1M steps.
+During the training, we use the neural network taking a 2-dimensional input (the position of the agent) and
+processes it through a single fully connected layers of size 64 followed by a ReLU activation then fed into a
+final linear layer that produces 4 logits (four actions: Up, Down, Left, and Right).
+
+D.3    Mountain Car Experiment
+
+We use the standard Mountain Car environment provided by Towers et al. (2024). Once the car reaches the
+goal, it is reset to the original starting point. The reward function is defined using the environment’s default
+
+
+                                                            37
+Published in Transactions on Machine Learning Research (08/2025)
+
+
+
+
+setting:
+                                                (
+                                                    0    if the agent reaches the goal,
+                              r0 (s, a, s ) =
+                                        ′
+                                                    −1   otherwise,
+
+and we set r(s, a) := Es′ [r0 (s, a, s′ )]. To emphasize safety, we introduce the constraint reward function:
+                                                (
+                                                 −1 if the car’s speed exceeds 0.06,
+                               r1 (s, a, s ) =
+                                           ′
+                                                 0   otherwise,
+
+and define the cost function c(s, a) := −Es′ [ r1 (s, a, s′ )]. In this experiment, we account for environment
+uncertainty by perturbing the “gravity” parameter from its nominal value 0.0025 to 0.003 in the worst-case
+scenario. In this experiment, we set the constraint to be −4 (i.e. we require −V1π (µ) < 4). As shown in
+Figure 3b, both CRPO and RRPO learn a feasible solution.
+Given that the MountainCar environment has a continuous state space (i.e., the car’s position and velocity),
+we employ radial basis function (RBF) features to achieve a linear approximation of the policy. Specifically,
+each state s is first transformed into an RBF feature vector ϕ(s), which is then multiplied by the policy
+parameters θ (one column per action) to generate logits; these logits are passed through a softmax function
+to produce the policy distribution over actions. Additionally, we incorporate an ϵ-greedy strategy with an
+initial ϵ = 0.1, decaying at a rate of 0.9999, to encourage exploration in the early stages of training.
+We set the 2-norm (s, a)-rectangular uncertainty set defined by Equation (10). Since the state space is contin-
+uous, when evaluating the centered value function, we uniformly sample 100 states from the state space to es-
+timate the mean and the variance value of V π (s). The radius of the p-norm uncertainty set is set to be 0.0002.
+This value is manually tuned from a preset hyper-parameter set {0.00001, 0.0001, 0.0002, 0.0003, 0.001}.
+When the radius value is too high, the policy tends to be too conservative; when the radius value is too
+small, the policy performs similar as the non-robust case.
+
+D.4   Robust Control Experiment
+
+In this experiment, we adopt the common PPO tricks to stablize the training. Each algorithm was trained for
+2 million timesteps using identical hyperparameters to ensure fair comparison: learning rate of 3×10−4 , batch
+size of 256, discount factor γ = 0.99, and PPO clip range of 0.2. We incorporated energy-based constraints
+with a threshold of 0.25, representing a moderate constraint that provides meaningful limitations without
+being overly restrictive. For the constrained algorithms, Primal-Dual Policy Gradient (Wang et al., 2022)
+employed a constraint learning rate of 3 × 10−4 with Lagrange multiplier initialization of 0.1 and maximum
+value of 100.0. On the construction of the uncertainty set, we follow Hou et al. (2020)’s robust Actor-Critic
+algorithm to obtain the desired robust value function approximation. The radius of the uncertainty set is
+set as 0.001. In our experiment, we ran three independent runs and reported the averaged results in the
+experimental section.
+
+
+
+
+                                                            38
+
